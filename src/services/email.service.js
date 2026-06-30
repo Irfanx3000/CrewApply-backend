@@ -1,0 +1,98 @@
+'use strict';
+
+const nodemailer = require('nodemailer');
+const { config } = require('../config');
+const verificationEmail = require('../emails/templates/verificationEmail');
+const resetPasswordEmail = require('../emails/templates/resetPasswordEmail');
+
+let _transporter = null;
+
+/**
+ * Returns a lazily-initialised nodemailer transporter.
+ *
+ * In development (no EMAIL_HOST configured) the service logs emails to the
+ * console instead of sending them, avoiding the need for real SMTP credentials.
+ *
+ * @returns {Promise<import('nodemailer').Transporter>}
+ */
+const getTransporter = async () => {
+  if (_transporter) return _transporter;
+
+  if (!config.email.host) {
+    // Development fallback — create a disposable Ethereal account and log the preview URL.
+    const testAccount = await nodemailer.createTestAccount();
+
+    _transporter = nodemailer.createTransport({
+      host: 'smtp.ethereal.email',
+      port: 587,
+      secure: false,
+      auth: { user: testAccount.user, pass: testAccount.pass },
+    });
+
+    return _transporter;
+  }
+
+  _transporter = nodemailer.createTransport({
+    host: config.email.host,
+    port: config.email.port,
+    secure: config.email.port === 465,
+    auth: { user: config.email.user, pass: config.email.pass },
+  });
+
+  return _transporter;
+};
+
+/**
+ * Core send function shared by all email helpers.
+ *
+ * @param {{ to: string, subject: string, html: string }} options
+ * @returns {Promise<void>}
+ */
+const sendEmail = async ({ to, subject, html }) => {
+  const transporter = await getTransporter();
+
+  const info = await transporter.sendMail({
+    from: config.email.from,
+    to,
+    subject,
+    html,
+  });
+
+  if (!config.email.host && config.isDevelopment) {
+    console.log('\n📧 Email preview URL:', nodemailer.getTestMessageUrl(info));
+  }
+};
+
+// ── Domain-specific helpers ───────────────────────────────────────────────────
+
+/**
+ * Sends the email verification email.
+ *
+ * @param {{ to: string, name: string, token: string }} params
+ */
+const sendVerificationEmail = async ({ to, name, token }) => {
+  const verificationUrl = `${config.client.url}/verify-email/${token}`;
+
+  await sendEmail({
+    to,
+    subject: 'Verify your email address — CrewApply',
+    html: verificationEmail({ name, verificationUrl }),
+  });
+};
+
+/**
+ * Sends the password reset email.
+ *
+ * @param {{ to: string, name: string, token: string }} params
+ */
+const sendPasswordResetEmail = async ({ to, name, token }) => {
+  const resetUrl = `${config.client.url}/reset-password/${token}`;
+
+  await sendEmail({
+    to,
+    subject: 'Reset your password — CrewApply',
+    html: resetPasswordEmail({ name, resetUrl }),
+  });
+};
+
+module.exports = { sendVerificationEmail, sendPasswordResetEmail };
