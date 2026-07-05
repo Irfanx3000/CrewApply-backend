@@ -3,8 +3,15 @@
 const fs = require('fs');
 const path = require('path');
 
-// Base uploads directory — relative to project root
-const UPLOADS_ROOT = path.join(__dirname, '..', '..', 'uploads');
+// Base uploads directory. The physical folders (temp/, profile/, resumes/, …)
+// live under src/uploads, so resolve to there — __dirname is src/services.
+const UPLOADS_ROOT = path.join(__dirname, '..', 'uploads');
+
+// Ensure the standard subdirectories exist so multer/sharp can always write.
+for (const dir of ['temp', 'profile', 'resumes', 'certificates', 'company']) {
+  const full = path.join(UPLOADS_ROOT, dir);
+  if (!fs.existsSync(full)) fs.mkdirSync(full, { recursive: true });
+}
 
 /**
  * Moves a file from multer's temp directory to its final destination.
@@ -37,7 +44,7 @@ const saveFile = (tmpPath, destDir, filename) => {
  */
 const deleteFile = (relativePath) => {
   if (!relativePath) return;
-  const abs = path.join(__dirname, '..', '..', relativePath);
+  const abs = path.join(__dirname, '..', relativePath);
   if (fs.existsSync(abs)) {
     fs.unlinkSync(abs);
   }
@@ -49,7 +56,7 @@ const deleteFile = (relativePath) => {
  */
 const fileExists = (relativePath) => {
   if (!relativePath) return false;
-  const abs = path.join(__dirname, '..', '..', relativePath);
+  const abs = path.join(__dirname, '..', relativePath);
   return fs.existsSync(abs);
 };
 

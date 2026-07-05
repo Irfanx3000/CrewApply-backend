@@ -12,6 +12,7 @@ const { config } = require('./src/config');
 const setupRoutes = require('./src/routes');
 const errorMiddleware = require('./src/middleware/error.middleware');
 const { generalLimiter } = require('./src/middleware/rateLimiter.middleware');
+const { UPLOADS_ROOT } = require('./src/services/storage.service');
 
 const app = express();
 
@@ -48,6 +49,10 @@ if (config.isDevelopment) {
 // ── Body Parsing ──────────────────────────────────────────────────────────────
 app.use(express.json({ limit: config.body.limit }));
 app.use(express.urlencoded({ extended: true, limit: config.body.limit }));
+
+// ── Static uploads (profile photos, resumes, …) ───────────────────────────────
+// Served at /uploads/... so clients can load stored files by their DB path.
+app.use('/uploads', express.static(UPLOADS_ROOT));
 
 // ── HTTP Parameter Pollution Prevention ──────────────────────────────────────
 // Guards against duplicate query parameters (e.g. ?sort=asc&sort=desc).

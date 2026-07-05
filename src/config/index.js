@@ -35,8 +35,15 @@ const config = {
     phoneNumber: process.env.TWILIO_PHONE_NUMBER,
   },
 
+  // Test-only: when true, OTPs are printed to the server logs even in production
+  // (so a deployment without Twilio — e.g. on Railway — can still be tested).
+  // Leave OFF for a real production release.
+  smsDebug: process.env.SMS_DEBUG === 'true',
+
   security: {
-    bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS, 10) || 12,
+    // 10 rounds (~60ms) is a secure, OWASP-accepted default and ~4x faster than
+    // 12 (~260ms) — the dominant cost of register/login. Override via env if needed.
+    bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS, 10) || 10,
     maxLoginAttempts: parseInt(process.env.MAX_LOGIN_ATTEMPTS, 10) || 5,
     lockDurationMinutes: parseInt(process.env.LOCK_DURATION_MINUTES, 10) || 30,
     emailVerificationExpiryHours: 24,
@@ -44,9 +51,18 @@ const config = {
   },
 
   rateLimit: {
+    // Login + Google — tight, to resist password brute-forcing.
     auth: {
       windowMs: 15 * 60 * 1000,
       max: 10,
+    },
+    // Onboarding: register + send-otp + verify-mobile. Needs more headroom
+    // (mistyped OTPs, resends, back/forward re-registration) and is already
+    // protected per-phone by the OTP attempt limit + 60s cooldown. Kept on its
+    // own bucket so onboarding retries never lock a user out of login.
+    otp: {
+      windowMs: 15 * 60 * 1000,
+      max: 30,
     },
     passwordReset: {
       windowMs: 60 * 60 * 1000,

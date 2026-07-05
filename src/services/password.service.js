@@ -1,23 +1,19 @@
 'use strict';
 
-const { REGEX } = require('../constants/regex');
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
 
 /**
- * Validates password strength against the policy defined in REGEX.PASSWORD_STRENGTH.
- *
- * At minimum requires: 8+ characters, one uppercase, one lowercase,
- * one digit, and one special character.
+ * Validates the password policy: at least 8 characters.
  *
  * @param {string} password
- * @throws {AppError} When the password does not meet the policy.
+ * @throws {AppError} When the password is shorter than 8 characters.
  */
 const validateStrength = (password) => {
-  if (!REGEX.PASSWORD_STRENGTH.test(password)) {
+  if (typeof password !== 'string' || password.length < 8) {
     throw new AppError(
-      'Password must be at least 8 characters and include uppercase, lowercase, a number, and a special character.',
+      'Password must be at least 8 characters.',
       HTTP_STATUS.BAD_REQUEST,
       'WEAK_PASSWORD'
     );

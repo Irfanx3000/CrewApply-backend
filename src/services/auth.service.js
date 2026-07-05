@@ -12,7 +12,7 @@ const { validateStrength, assertPasswordChanged } = require('./password.service'
 const { signAccessToken, createRefreshToken, rotateRefreshToken, validateRefreshToken, revokeRefreshToken, revokeAllRefreshTokens } = require('./token.service');
 const { sendVerificationEmail, sendPasswordResetEmail } = require('./email.service');
 const { verifyGoogleIdToken } = require('./oAuth.service');
-const { createOtp, verifyOtp } = require('./otp.service');
+const { createOtp, verifyOtp, clearOtp } = require('./otp.service');
 const { sendOtpSms } = require('./sms.service');
 const auditService = require('./audit.service');
 
@@ -89,20 +89,29 @@ const register = async (body, req) => {
     throw new AppError('You must be at least 18 years old to register.', HTTP_STATUS.BAD_REQUEST, 'AGE_REQUIREMENT');
   }
 
-  // Email must be globally unique
-  const existingByEmail = await User.findOne({ email });
-  if (existingByEmail) {
-    throw new AppError(AUTH_MESSAGES.EMAIL_ALREADY_EXISTS, HTTP_STATUS.CONFLICT, 'EMAIL_EXISTS');
+  // Block ONLY if a fully-registered (verified) account already owns this email
+  // or phone. This lets a user go back through onboarding, change details, and
+  // resubmit without hitting a duplicate error on a half-finished registration.
+  const verifiedConflict = await User.findOne({
+    phoneVerified: true,
+    $or: [{ email }, { phone: normalizedPhone }],
+  });
+  if (verifiedConflict) {
+    if (verifiedConflict.email === email) {
+      throw new AppError(AUTH_MESSAGES.EMAIL_ALREADY_EXISTS, HTTP_STATUS.CONFLICT, 'EMAIL_EXISTS');
+    }
+    throw new AppError(AUTH_MESSAGES.PHONE_ALREADY_REGISTERED, HTTP_STATUS.CONFLICT, 'PHONE_EXISTS');
   }
 
-  // Phone: block if already verified; clean up if unverified (allow re-registration)
-  const existingByPhone = await User.findOne({ phone: normalizedPhone });
-  if (existingByPhone) {
-    if (existingByPhone.phoneVerified) {
-      throw new AppError(AUTH_MESSAGES.PHONE_ALREADY_REGISTERED, HTTP_STATUS.CONFLICT, 'PHONE_EXISTS');
-    }
-    await User.deleteOne({ _id: existingByPhone._id });
-  }
+  // Remove any prior UNVERIFIED registration for this email or phone so a repeat
+  // submission (edited or not) starts clean and just re-sends a fresh OTP.
+  await User.deleteMany({
+    phoneVerified: false,
+    $or: [{ email }, { phone: normalizedPhone }],
+  });
+  // Clear the prior OTP so this deliberate re-registration isn't blocked by the
+  // 60s resend cooldown (the cooldown still applies to the Resend OTP button).
+  await clearOtp(normalizedPhone, OTP_PURPOSES.MOBILE_VERIFICATION);
 
   const user = await User.create({
     name,
@@ -126,13 +135,14 @@ const register = async (body, req) => {
   });
 
   const context = extractContext(req);
-  await auditService.log({ event: AUDIT_EVENTS.REGISTER, userId: user._id, ...context });
-  await auditService.log({
+  // Fire-and-forget audit logs — they must not add DB round-trips to the response.
+  auditService.log({ event: AUDIT_EVENTS.REGISTER, userId: user._id, ...context }).catch(() => {});
+  auditService.log({
     event: AUDIT_EVENTS.MOBILE_OTP_SENT,
     userId: user._id,
     ...context,
     metadata: { phone: normalizedPhone },
-  });
+  }).catch(() => {});
 
   return { id: user._id, name: user.name, email: user.email, phone: normalizedPhone };
 };
@@ -211,7 +221,7 @@ const verifyMobile = async ({ phone, otp }, req) => {
   const accessToken = signAccessToken(user);
   const refreshToken = await createRefreshToken(user._id, context);
 
-  await auditService.log({ event: AUDIT_EVENTS.MOBILE_OTP_VERIFIED, userId: user._id, ...context });
+  auditService.log({ event: AUDIT_EVENTS.MOBILE_OTP_VERIFIED, userId: user._id, ...context }).catch(() => {});
 
   return {
     accessToken,
@@ -335,12 +345,19 @@ const login = async ({ identifier, password }, req) => {
   const accessToken = signAccessToken(user);
   const refreshToken = await createRefreshToken(user._id, context);
 
-  await auditService.log({ event: AUDIT_EVENTS.LOGIN, userId: user._id, ...context });
+  auditService.log({ event: AUDIT_EVENTS.LOGIN, userId: user._id, ...context }).catch(() => {});
 
   return {
     accessToken,
     refreshToken,
-    user: { id: user._id, name: user.name, email: user.email, role: user.role },
+    user: {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      onboardingCompleted: user.onboardingCompleted,
+    },
   };
 };
 

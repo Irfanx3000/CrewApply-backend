@@ -17,14 +17,21 @@ const emailField = () =>
     .trim()
     .notEmpty().withMessage('Email is required.')
     .isEmail().withMessage('Please provide a valid email address.')
-    .normalizeEmail();
+    // Only lowercase — do NOT strip Gmail dots/sub-addresses. Login lowercases
+    // the identifier but keeps dots, so stripping them here would let a user
+    // register but never log in with the address they typed.
+    .normalizeEmail({
+      gmail_remove_dots: false,
+      gmail_remove_subaddress: false,
+      outlookdotcom_remove_subaddress: false,
+      yahoo_remove_subaddress: false,
+      icloud_remove_subaddress: false,
+    });
 
 const passwordField = (fieldName = 'password') =>
   body(fieldName)
     .notEmpty().withMessage('Password is required.')
-    .isLength({ min: 8 }).withMessage('Password must be at least 8 characters.')
-    .matches(REGEX.PASSWORD_STRENGTH)
-    .withMessage('Password must include uppercase, lowercase, a number, and a special character.');
+    .isLength({ min: 8 }).withMessage('Password must be at least 8 characters.');
 
 const phoneField = (fieldName = 'phone') =>
   body(fieldName)
@@ -65,14 +72,16 @@ const register = [
     .notEmpty().withMessage('Country is required.')
     .isLength({ min: 2, max: 60 }).withMessage('Country must be between 2 and 60 characters.'),
 
+  // State/City are optional — some countries have no sub-divisions in the
+  // client dataset. When provided they must be 2–60 characters.
   body('state')
+    .optional({ checkFalsy: true })
     .trim()
-    .notEmpty().withMessage('State/Province is required.')
     .isLength({ min: 2, max: 60 }).withMessage('State must be between 2 and 60 characters.'),
 
   body('city')
+    .optional({ checkFalsy: true })
     .trim()
-    .notEmpty().withMessage('City is required.')
     .isLength({ min: 2, max: 60 }).withMessage('City must be between 2 and 60 characters.'),
 
   phoneField(),

@@ -102,6 +102,12 @@ const verifyOtp = async (phone, rawOtp, purpose) => {
   const isValid = timingSafeEqual(candidateHash, otpDoc.otpHash);
 
   if (!isValid) {
+    // If this wrong entry exhausted the allowance, burn the code and say so —
+    // avoids the confusing "0 attempts remaining" on the final try.
+    if (otpDoc.attempts >= OTP_CONFIG.MAX_ATTEMPTS) {
+      await Otp.deleteOne({ _id: otpDoc._id });
+      throw new AppError(AUTH_MESSAGES.OTP_MAX_ATTEMPTS, HTTP_STATUS.TOO_MANY_REQUESTS, 'OTP_MAX_ATTEMPTS');
+    }
     const remaining = OTP_CONFIG.MAX_ATTEMPTS - otpDoc.attempts;
     throw new AppError(
       `${AUTH_MESSAGES.OTP_INVALID} ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.`,
@@ -115,4 +121,15 @@ const verifyOtp = async (phone, rawOtp, purpose) => {
   return true;
 };
 
-module.exports = { createOtp, verifyOtp };
+/**
+ * Removes any existing OTP for a phone + purpose (clears the resend cooldown).
+ * Used when a user deliberately re-registers, so a fresh code can be issued.
+ *
+ * @param {string} phone - E.164 phone number
+ * @param {string} purpose - One of OTP_PURPOSES values
+ */
+const clearOtp = async (phone, purpose) => {
+  await Otp.deleteMany({ phone, purpose });
+};
+
+module.exports = { createOtp, verifyOtp, clearOtp };

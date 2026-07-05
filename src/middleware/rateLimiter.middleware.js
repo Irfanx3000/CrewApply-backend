@@ -39,6 +39,17 @@ const authLimiter = createLimiter({
 });
 
 /**
+ * Applied to onboarding endpoints (register, send-otp, verify-mobile).
+ * More lenient than authLimiter so OTP retries / resends / re-registration
+ * don't starve login; OTP endpoints are additionally protected per-phone.
+ */
+const otpLimiter = createLimiter({
+  windowMs: config.rateLimit.otp.windowMs,
+  max: config.rateLimit.otp.max,
+  message: 'Too many attempts. Please wait a few minutes and try again.',
+});
+
+/**
  * Applied to the forgot-password and resend-verification endpoints.
  * 5 requests per hour per IP — stricter to prevent email flooding.
  */
@@ -57,4 +68,4 @@ const generalLimiter = createLimiter({
   max: config.rateLimit.general.max,
 });
 
-module.exports = { authLimiter, passwordResetLimiter, generalLimiter };
+module.exports = { authLimiter, otpLimiter, passwordResetLimiter, generalLimiter };

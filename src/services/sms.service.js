@@ -42,11 +42,20 @@ const sendSms = async ({ to, body }) => {
   const client = getClient();
 
   if (!client) {
-    console.log('\n[SMS DEV] ─────────────────────────────────────────');
-    console.log(`  To  : ${to}`);
-    console.log(`  Body: ${body}`);
-    console.log('────────────────────────────────────────────────────\n');
-    return { success: true, dev: true };
+    // Print the OTP to logs when NOT in production, OR when SMS_DEBUG is explicitly
+    // enabled — the latter lets a test deployment (e.g. Railway) without Twilio be
+    // verified by reading the code from the platform logs.
+    if (config.env !== 'production' || config.smsDebug) {
+      console.log('\n[SMS DEV] ─────────────────────────────────────────');
+      console.log(`  To  : ${to}`);
+      console.log(`  Body: ${body}`);
+      console.log('────────────────────────────────────────────────────\n');
+      return { success: true, dev: true };
+    }
+    // Real production without Twilio: never leak the code — surface a clear error
+    // instead (the caller treats SMS failure as non-fatal).
+    console.error(`[SMS] Twilio is not configured — cannot deliver SMS to ${to}.`);
+    throw new Error('SMS service is not configured.');
   }
 
   await client.messages.create({
