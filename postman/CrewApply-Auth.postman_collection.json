@@ -6,11 +6,21 @@
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "baseUrl",      "value": "http://localhost:5000/api/v1", "type": "string" },
-    { "key": "accessToken",  "value": "",                             "type": "string" },
-    { "key": "refreshToken", "value": "",                             "type": "string" },
-    { "key": "verifyToken",  "value": "",                             "type": "string" },
-    { "key": "resetToken",   "value": "",                             "type": "string" }
+    { "key": "baseUrl",          "value": "http://localhost:5000/api/v1", "type": "string" },
+    { "key": "accessToken",      "value": "",                             "type": "string" },
+    { "key": "refreshToken",     "value": "",                             "type": "string" },
+    { "key": "verifyToken",      "value": "",                             "type": "string" },
+    { "key": "resetToken",       "value": "",                             "type": "string" },
+    { "key": "adminEmail",       "value": "",                             "type": "string", "description": "Email of a pre-existing user with role: 'admin' (no self-serve admin signup exists — create one directly in MongoDB)." },
+    { "key": "adminPassword",    "value": "",                             "type": "string" },
+    { "key": "adminAccessToken", "value": "",                             "type": "string" },
+    { "key": "jobId",            "value": "",                             "type": "string" },
+    { "key": "lifecycleJobId",   "value": "",                             "type": "string" },
+    { "key": "draftJobId",       "value": "",                             "type": "string" },
+    { "key": "appJobId",         "value": "",                             "type": "string", "description": "A published job with requiredDocuments set, used by the Applications folder." },
+    { "key": "unopenJobId",      "value": "",                             "type": "string", "description": "A draft job left unpublished, used to test JOB_NOT_OPEN." },
+    { "key": "applicationId",   "value": "",                             "type": "string" },
+    { "key": "documentTypeId",  "value": "",                             "type": "string" }
   ],
   "item": [
     {
@@ -402,6 +412,904 @@
               ]
             }
           }]
+        }
+      ]
+    },
+    {
+      "name": "Jobs",
+      "description": "Requires a pre-existing user with role: 'admin' in MongoDB (no self-serve admin signup exists yet). Set adminEmail/adminPassword collection variables to that account, then run 'Admin Login' first.",
+      "item": [
+        {
+          "name": "Admin",
+          "item": [
+            {
+              "name": "Admin Login",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+                "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}" }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "pm.collectionVariables.set('adminAccessToken', pm.response.json().data.accessToken);"
+              ] } }]
+            },
+            {
+              "name": "Create Job (success)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Second Officer\",\n  \"companyName\": \"Atlantic Shipping Co.\",\n  \"department\": \"Deck\",\n  \"rank\": \"Second Officer\",\n  \"vesselType\": \"Container\",\n  \"location\": { \"city\": \"Mumbai\", \"country\": \"India\" },\n  \"employmentType\": \"Full Time\",\n  \"description\": \"Seeking an experienced Second Officer for a container vessel.\",\n  \"salary\": { \"min\": 3500, \"max\": 4500, \"currency\": \"USD\", \"period\": \"month\" },\n  \"vacancies\": 2,\n  \"applicationDeadline\": \"2026-12-31\"\n}"
+                }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                "pm.test('status is draft', () => pm.expect(pm.response.json().data.job.status).to.eql('draft'));",
+                "pm.collectionVariables.set('jobId', pm.response.json().data.job._id);"
+              ] } }]
+            },
+            {
+              "name": "Create Job — Missing Required Field (400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"] },
+                "body": { "mode": "raw", "raw": "{\n  \"companyName\": \"Atlantic Shipping Co.\"\n}" }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 400', () => pm.response.to.have.status(400));", "pm.test('has details', () => pm.expect(pm.response.json().details).to.be.an('array'));"] } }]
+            },
+            {
+              "name": "Create Job — Invalid Enum (400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Bad Job\",\n  \"companyName\": \"Atlantic Shipping Co.\",\n  \"department\": \"NotARealDepartment\",\n  \"rank\": \"Second Officer\",\n  \"vesselType\": \"Container\",\n  \"location\": { \"country\": \"India\" },\n  \"employmentType\": \"Full Time\",\n  \"description\": \"Invalid department test.\"\n}"
+                }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 400', () => pm.response.to.have.status(400));"] } }]
+            },
+            {
+              "name": "Create Job — Invalid Date (400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Bad Job\",\n  \"companyName\": \"Atlantic Shipping Co.\",\n  \"department\": \"Deck\",\n  \"rank\": \"Second Officer\",\n  \"vesselType\": \"Container\",\n  \"location\": { \"country\": \"India\" },\n  \"employmentType\": \"Full Time\",\n  \"description\": \"Invalid date test.\",\n  \"applicationDeadline\": \"not-a-date\"\n}"
+                }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 400', () => pm.response.to.have.status(400));"] } }]
+            },
+            {
+              "name": "Create Job — Salary Min > Max (400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Bad Job\",\n  \"companyName\": \"Atlantic Shipping Co.\",\n  \"department\": \"Deck\",\n  \"rank\": \"Second Officer\",\n  \"vesselType\": \"Container\",\n  \"location\": { \"country\": \"India\" },\n  \"employmentType\": \"Full Time\",\n  \"description\": \"Salary range test.\",\n  \"salary\": { \"min\": 5000, \"max\": 3000 }\n}"
+                }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 400', () => pm.response.to.have.status(400));"] } }]
+            },
+            {
+              "name": "Create Job — Negative Vacancies (400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Bad Job\",\n  \"companyName\": \"Atlantic Shipping Co.\",\n  \"department\": \"Deck\",\n  \"rank\": \"Second Officer\",\n  \"vesselType\": \"Container\",\n  \"location\": { \"country\": \"India\" },\n  \"employmentType\": \"Full Time\",\n  \"description\": \"Vacancies test.\",\n  \"vacancies\": -1\n}"
+                }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 400', () => pm.response.to.have.status(400));"] } }]
+            },
+            {
+              "name": "Create Job — Unauthorized, No Token (401)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{baseUrl}}/admin/jobs", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"] },
+                "body": { "mode": "raw", "raw": "{\n  \"title\": \"Second Officer\"\n}" }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 401', () => pm.response.to.have.status(401));"] } }]
+            },
+            {
+              "name": "Create Job — Non-Admin Role (403)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"] },
+                "body": { "mode": "raw", "raw": "{\n  \"title\": \"Second Officer\"\n}" }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 403', () => pm.response.to.have.status(403));"] } }]
+            },
+            {
+              "name": "Update Job (success)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs/{{jobId}}", "host": ["{{baseUrl}}"], "path": ["admin", "jobs", "{{jobId}}"] },
+                "body": { "mode": "raw", "raw": "{\n  \"vacancies\": 3,\n  \"urgent\": true\n}" }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "pm.test('vacancies updated', () => pm.expect(pm.response.json().data.job.vacancies).to.eql(3));"
+              ] } }]
+            },
+            {
+              "name": "Publish Job (draft → published)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs/{{jobId}}/status", "host": ["{{baseUrl}}"], "path": ["admin", "jobs", "{{jobId}}", "status"] },
+                "body": { "mode": "raw", "raw": "{\n  \"status\": \"published\"\n}" }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "pm.test('status published', () => pm.expect(pm.response.json().data.job.status).to.eql('published'));"
+              ] } }]
+            },
+            {
+              "name": "List All Jobs (any status)",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+                "url": { "raw": "{{baseUrl}}/admin/jobs", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "pm.test('has pagination meta', () => pm.expect(pm.response.json().meta.pagination).to.be.an('object'));"
+              ] } }]
+            },
+            {
+              "name": "Filter Jobs By Status",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+                "url": { "raw": "{{baseUrl}}/admin/jobs?status=published", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"], "query": [{ "key": "status", "value": "published" }] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "pm.test('all jobs published', () => pm.response.json().data.jobs.every((j) => j.status === 'published') && pm.expect(true).to.be.true);"
+              ] } }]
+            },
+            {
+              "name": "Paginate Jobs",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+                "url": { "raw": "{{baseUrl}}/admin/jobs?page=1&limit=2", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"], "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "2" }] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "pm.test('limit respected', () => pm.expect(pm.response.json().data.jobs.length).to.be.at.most(2));"
+              ] } }]
+            },
+            {
+              "name": "Create Lifecycle Test Job",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Chief Engineer\",\n  \"companyName\": \"Pacific Marine Agency\",\n  \"department\": \"Engine\",\n  \"rank\": \"Chief Engineer\",\n  \"vesselType\": \"Tanker\",\n  \"location\": { \"city\": \"Dubai\", \"country\": \"UAE\" },\n  \"employmentType\": \"Contract\",\n  \"description\": \"Lifecycle transition test job.\"\n}"
+                }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                "pm.collectionVariables.set('lifecycleJobId', pm.response.json().data.job._id);"
+              ] } }]
+            },
+            {
+              "name": "Publish Lifecycle Job",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs/{{lifecycleJobId}}/status", "host": ["{{baseUrl}}"], "path": ["admin", "jobs", "{{lifecycleJobId}}", "status"] },
+                "body": { "mode": "raw", "raw": "{\n  \"status\": \"published\"\n}" }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] } }]
+            },
+            {
+              "name": "Pause Lifecycle Job",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs/{{lifecycleJobId}}/status", "host": ["{{baseUrl}}"], "path": ["admin", "jobs", "{{lifecycleJobId}}", "status"] },
+                "body": { "mode": "raw", "raw": "{\n  \"status\": \"paused\"\n}" }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));", "pm.test('status paused', () => pm.expect(pm.response.json().data.job.status).to.eql('paused'));"] } }]
+            },
+            {
+              "name": "Close Lifecycle Job",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs/{{lifecycleJobId}}/status", "host": ["{{baseUrl}}"], "path": ["admin", "jobs", "{{lifecycleJobId}}", "status"] },
+                "body": { "mode": "raw", "raw": "{\n  \"status\": \"closed\"\n}" }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));", "pm.test('status closed', () => pm.expect(pm.response.json().data.job.status).to.eql('closed'));"] } }]
+            },
+            {
+              "name": "Invalid Status Transition — closed → published (400)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs/{{lifecycleJobId}}/status", "host": ["{{baseUrl}}"], "path": ["admin", "jobs", "{{lifecycleJobId}}", "status"] },
+                "body": { "mode": "raw", "raw": "{\n  \"status\": \"published\"\n}" }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 400', () => pm.response.to.have.status(400));", "pm.test('code INVALID_STATUS_TRANSITION', () => pm.expect(pm.response.json().code).to.eql('INVALID_STATUS_TRANSITION'));"] } }]
+            },
+            {
+              "name": "Archive Lifecycle Job",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs/{{lifecycleJobId}}/status", "host": ["{{baseUrl}}"], "path": ["admin", "jobs", "{{lifecycleJobId}}", "status"] },
+                "body": { "mode": "raw", "raw": "{\n  \"status\": \"archived\"\n}" }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));", "pm.test('status archived', () => pm.expect(pm.response.json().data.job.status).to.eql('archived'));"] } }]
+            },
+            {
+              "name": "Create Draft Job For Delete Test",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/jobs", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Deck Cadet\",\n  \"companyName\": \"Test Agency\",\n  \"department\": \"Deck\",\n  \"rank\": \"Deck Cadet\",\n  \"vesselType\": \"Bulk Carrier\",\n  \"location\": { \"country\": \"Philippines\" },\n  \"employmentType\": \"Internship\",\n  \"description\": \"Delete test job.\"\n}"
+                }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                "pm.collectionVariables.set('draftJobId', pm.response.json().data.job._id);"
+              ] } }]
+            },
+            {
+              "name": "Delete Draft Job (success)",
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+                "url": { "raw": "{{baseUrl}}/admin/jobs/{{draftJobId}}", "host": ["{{baseUrl}}"], "path": ["admin", "jobs", "{{draftJobId}}"] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] } }]
+            },
+            {
+              "name": "Delete Non-Draft Job — Rejected (400)",
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+                "url": { "raw": "{{baseUrl}}/admin/jobs/{{lifecycleJobId}}", "host": ["{{baseUrl}}"], "path": ["admin", "jobs", "{{lifecycleJobId}}"] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 400', () => pm.response.to.have.status(400));", "pm.test('code DELETE_NOT_ALLOWED', () => pm.expect(pm.response.json().code).to.eql('DELETE_NOT_ALLOWED'));"] } }]
+            }
+          ]
+        },
+        {
+          "name": "Public",
+          "item": [
+            {
+              "name": "List Published Jobs",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/jobs", "host": ["{{baseUrl}}"], "path": ["jobs"] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "pm.test('only published jobs', () => pm.expect(pm.response.json().data.jobs.every((j) => j.status === 'published')).to.be.true);"
+              ] } }]
+            },
+            {
+              "name": "Get Published Job Detail",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/jobs/{{jobId}}", "host": ["{{baseUrl}}"], "path": ["jobs", "{{jobId}}"] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "pm.test('has nested company object', () => pm.expect(pm.response.json().data.job.company).to.be.an('object'));"
+              ] } }]
+            },
+            {
+              "name": "Get Archived Job By Id — Not Found (404)",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/jobs/{{lifecycleJobId}}", "host": ["{{baseUrl}}"], "path": ["jobs", "{{lifecycleJobId}}"] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 404', () => pm.response.to.have.status(404));"] } }]
+            },
+            {
+              "name": "Get Job — Invalid ObjectId (400)",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/jobs/not-a-valid-id", "host": ["{{baseUrl}}"], "path": ["jobs", "not-a-valid-id"] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 400', () => pm.response.to.have.status(400));"] } }]
+            },
+            {
+              "name": "Search Jobs",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/jobs?search=Officer", "host": ["{{baseUrl}}"], "path": ["jobs"], "query": [{ "key": "search", "value": "Officer" }] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] } }]
+            },
+            {
+              "name": "Filter By Department",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/jobs?department=Deck", "host": ["{{baseUrl}}"], "path": ["jobs"], "query": [{ "key": "department", "value": "Deck" }] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] } }]
+            },
+            {
+              "name": "Filter By Vessel Type",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/jobs?vesselType=Container", "host": ["{{baseUrl}}"], "path": ["jobs"], "query": [{ "key": "vesselType", "value": "Container" }] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] } }]
+            },
+            {
+              "name": "Filter By Country",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/jobs?country=India", "host": ["{{baseUrl}}"], "path": ["jobs"], "query": [{ "key": "country", "value": "India" }] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] } }]
+            },
+            {
+              "name": "Filter By Employment Type",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/jobs?employmentType=Full Time", "host": ["{{baseUrl}}"], "path": ["jobs"], "query": [{ "key": "employmentType", "value": "Full Time" }] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] } }]
+            },
+            {
+              "name": "Combined Filters",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/jobs?department=Deck&vesselType=Container&country=India", "host": ["{{baseUrl}}"], "path": ["jobs"], "query": [{ "key": "department", "value": "Deck" }, { "key": "vesselType", "value": "Container" }, { "key": "country", "value": "India" }] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] } }]
+            },
+            {
+              "name": "Pagination",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/jobs?page=1&limit=1", "host": ["{{baseUrl}}"], "path": ["jobs"], "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "1" }] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "pm.test('limit respected', () => pm.expect(pm.response.json().data.jobs.length).to.be.at.most(1));"
+              ] } }]
+            },
+            {
+              "name": "Empty Result Set",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/jobs?department=Medical&vesselType=Tug", "host": ["{{baseUrl}}"], "path": ["jobs"], "query": [{ "key": "department", "value": "Medical" }, { "key": "vesselType", "value": "Tug" }] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "pm.test('empty array', () => pm.expect(pm.response.json().data.jobs).to.be.an('array').that.is.empty);"
+              ] } }]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Applications",
+      "description": "Requires 'Admin Login' (adminAccessToken) and 'Login (success)' (accessToken) to have both run first. Steps 5-6 (document upload) need a real file attached in Postman's Body > form-data tab — can't be scripted here. Step 9 needs an active subscription on the {{accessToken}} user — activate via the CrewApply-Subscriptions collection (or set subscriptionExpiresAt directly in MongoDB) before running it.",
+      "item": [
+        {
+          "name": "1. Admin: Create Job With Required Documents",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/admin/jobs", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Bosun\",\n  \"companyName\": \"Nordic Shipping Co.\",\n  \"department\": \"Deck\",\n  \"rank\": \"Bosun\",\n  \"vesselType\": \"Bulk Carrier\",\n  \"location\": { \"city\": \"Rotterdam\", \"country\": \"Netherlands\" },\n  \"employmentType\": \"Full Time\",\n  \"description\": \"Requires passport and resume on file before applying.\",\n  \"requiredDocuments\": [\"resume\", \"passport\"]\n}"
+            }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201', () => pm.response.to.have.status(201));",
+            "pm.test('requiredDocuments saved', () => pm.expect(pm.response.json().data.job.requiredDocuments).to.include.members(['resume','passport']));",
+            "pm.collectionVariables.set('appJobId', pm.response.json().data.job._id);"
+          ] } }]
+        },
+        {
+          "name": "2. Admin: Publish Job",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/admin/jobs/{{appJobId}}/status", "host": ["{{baseUrl}}"], "path": ["admin", "jobs", "{{appJobId}}", "status"] },
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"published\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] } }]
+        },
+        {
+          "name": "3. Eligibility — Before Docs or Subscription",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/applications/eligibility/{{appJobId}}", "host": ["{{baseUrl}}"], "path": ["applications", "eligibility", "{{appJobId}}"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "const e = pm.response.json().data.eligibility;",
+            "pm.test('not eligible', () => pm.expect(e.eligible).to.be.false);",
+            "pm.test('no subscription', () => pm.expect(e.hasActiveSubscription).to.be.false);",
+            "pm.test('missing documents', () => pm.expect(e.hasRequiredDocuments).to.be.false);"
+          ] } }]
+        },
+        {
+          "name": "4. Apply — Blocked, No Subscription (402)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/applications", "host": ["{{baseUrl}}"], "path": ["applications"] },
+            "body": { "mode": "raw", "raw": "{\n  \"jobId\": \"{{appJobId}}\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 402', () => pm.response.to.have.status(402));",
+            "pm.test('code SUBSCRIPTION_REQUIRED', () => pm.expect(pm.response.json().code).to.eql('SUBSCRIPTION_REQUIRED'));"
+          ] } }]
+        },
+        {
+          "name": "5. MANUAL — Upload Resume (attach a file)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/user/resume", "host": ["{{baseUrl}}"], "path": ["user", "resume"] },
+            "body": { "mode": "formdata", "formdata": [{ "key": "file", "type": "file", "src": [] }] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 201', () => pm.response.to.have.status(201));"] } }]
+        },
+        {
+          "name": "6. MANUAL — Upload Passport (attach a file)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/user/passport", "host": ["{{baseUrl}}"], "path": ["user", "passport"] },
+            "body": { "mode": "formdata", "formdata": [
+              { "key": "file", "type": "file", "src": [] },
+              { "key": "passportNumber", "value": "P1234567", "type": "text" }
+            ] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 201', () => pm.response.to.have.status(201));"] } }]
+        },
+        {
+          "name": "7. Eligibility — After Docs, Before Subscription",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/applications/eligibility/{{appJobId}}", "host": ["{{baseUrl}}"], "path": ["applications", "eligibility", "{{appJobId}}"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "const e = pm.response.json().data.eligibility;",
+            "pm.test('documents now complete', () => pm.expect(e.hasRequiredDocuments).to.be.true);",
+            "pm.test('still no subscription', () => pm.expect(e.hasActiveSubscription).to.be.false);"
+          ] } }]
+        },
+        {
+          "name": "8. Eligibility — Fully Eligible (after activating subscription)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/applications/eligibility/{{appJobId}}", "host": ["{{baseUrl}}"], "path": ["applications", "eligibility", "{{appJobId}}"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('eligible', () => pm.expect(pm.response.json().data.eligibility.eligible).to.be.true);"
+          ] } }]
+        },
+        {
+          "name": "9. Apply (success)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/applications", "host": ["{{baseUrl}}"], "path": ["applications"] },
+            "body": { "mode": "raw", "raw": "{\n  \"jobId\": \"{{appJobId}}\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201', () => pm.response.to.have.status(201));",
+            "pm.test('status applied', () => pm.expect(pm.response.json().data.application.status).to.eql('applied'));",
+            "pm.collectionVariables.set('applicationId', pm.response.json().data.application.id);"
+          ] } }]
+        },
+        {
+          "name": "10. Apply Again — Duplicate (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/applications", "host": ["{{baseUrl}}"], "path": ["applications"] },
+            "body": { "mode": "raw", "raw": "{\n  \"jobId\": \"{{appJobId}}\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 409', () => pm.response.to.have.status(409));",
+            "pm.test('code DUPLICATE_APPLICATION', () => pm.expect(pm.response.json().code).to.eql('DUPLICATE_APPLICATION'));"
+          ] } }]
+        },
+        {
+          "name": "11. List My Applications",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/applications", "host": ["{{baseUrl}}"], "path": ["applications"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('contains our application', () => pm.expect(pm.response.json().data.applications.some((a) => a.id === pm.collectionVariables.get('applicationId'))).to.be.true);"
+          ] } }]
+        },
+        {
+          "name": "12. Get Application By Id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/applications/{{applicationId}}", "host": ["{{baseUrl}}"], "path": ["applications", "{{applicationId}}"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('job populated', () => pm.expect(pm.response.json().data.application.job.title).to.eql('Bosun'));"
+          ] } }]
+        },
+        {
+          "name": "13. Withdraw Application",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/applications/{{applicationId}}/withdraw", "host": ["{{baseUrl}}"], "path": ["applications", "{{applicationId}}", "withdraw"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('status withdrawn', () => pm.expect(pm.response.json().data.application.status).to.eql('withdrawn'));"
+          ] } }]
+        },
+        {
+          "name": "14. Withdraw Again — Not Allowed (400)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/applications/{{applicationId}}/withdraw", "host": ["{{baseUrl}}"], "path": ["applications", "{{applicationId}}", "withdraw"] }
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 400', () => pm.response.to.have.status(400));"] } }]
+        },
+        {
+          "name": "15. Admin: Create Unpublished Job (for JOB_NOT_OPEN test)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/admin/jobs", "host": ["{{baseUrl}}"], "path": ["admin", "jobs"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Draft Only Job\",\n  \"companyName\": \"Test Co.\",\n  \"department\": \"Deck\",\n  \"rank\": \"Bosun\",\n  \"vesselType\": \"Bulk Carrier\",\n  \"location\": { \"country\": \"Netherlands\" },\n  \"employmentType\": \"Full Time\",\n  \"description\": \"Stays in draft on purpose.\"\n}"
+            }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 201', () => pm.response.to.have.status(201));",
+            "pm.collectionVariables.set('unopenJobId', pm.response.json().data.job._id);"
+          ] } }]
+        },
+        {
+          "name": "16. Apply To Unpublished Job — JOB_NOT_OPEN (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/applications", "host": ["{{baseUrl}}"], "path": ["applications"] },
+            "body": { "mode": "raw", "raw": "{\n  \"jobId\": \"{{unopenJobId}}\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('Status 400', () => pm.response.to.have.status(400));",
+            "pm.test('code JOB_NOT_OPEN', () => pm.expect(pm.response.json().code).to.eql('JOB_NOT_OPEN'));"
+          ] } }]
+        }
+      ]
+    },
+    {
+      "name": "Document Types",
+      "description": "Requires 'Admin Login' (adminAccessToken) and 'Login (success)' (accessToken) to have both run first. Steps marked MANUAL need a real file attached in Postman's Body > form-data tab.",
+      "item": [
+        {
+          "name": "Admin",
+          "item": [
+            {
+              "name": "1. Create Document Type (success)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/document-types", "host": ["{{baseUrl}}"], "path": ["admin", "document-types"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"key\": \"test_doc_type\",\n  \"label\": \"Test Document\",\n  \"description\": \"A document type created for Postman testing.\",\n  \"acceptedFileTypes\": \"both\",\n  \"maxSizeMB\": 5,\n  \"icon\": \"file-alt\"\n}"
+                }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                "pm.collectionVariables.set('documentTypeId', pm.response.json().data.documentType._id);"
+              ] } }]
+            },
+            {
+              "name": "2. Create Document Type — Duplicate Key (409)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/document-types", "host": ["{{baseUrl}}"], "path": ["admin", "document-types"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"key\": \"test_doc_type\",\n  \"label\": \"Duplicate\",\n  \"acceptedFileTypes\": \"pdf\",\n  \"maxSizeMB\": 5,\n  \"icon\": \"file-alt\"\n}"
+                }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 409', () => pm.response.to.have.status(409));",
+                "pm.test('code DOCUMENT_TYPE_EXISTS', () => pm.expect(pm.response.json().code).to.eql('DOCUMENT_TYPE_EXISTS'));"
+              ] } }]
+            },
+            {
+              "name": "3. Create Document Type — Invalid acceptedFileTypes (400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/document-types", "host": ["{{baseUrl}}"], "path": ["admin", "document-types"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"key\": \"another_type\",\n  \"label\": \"Bad Type\",\n  \"acceptedFileTypes\": \"video\",\n  \"maxSizeMB\": 5,\n  \"icon\": \"file-alt\"\n}"
+                }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 400', () => pm.response.to.have.status(400));"] } }]
+            },
+            {
+              "name": "4. Create — Pdf-Only Type (for upload wrong-type test)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/document-types", "host": ["{{baseUrl}}"], "path": ["admin", "document-types"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"key\": \"test_pdf_only\",\n  \"label\": \"Test PDF-Only\",\n  \"acceptedFileTypes\": \"pdf\",\n  \"maxSizeMB\": 5,\n  \"icon\": \"file-alt\"\n}"
+                }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 201', () => pm.response.to.have.status(201));"] } }]
+            },
+            {
+              "name": "5. List All Document Types (incl. inactive)",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+                "url": { "raw": "{{baseUrl}}/admin/document-types?includeInactive=true", "host": ["{{baseUrl}}"], "path": ["admin", "document-types"], "query": [{ "key": "includeInactive", "value": "true" }] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] } }]
+            },
+            {
+              "name": "6. Get Document Type By Id",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+                "url": { "raw": "{{baseUrl}}/admin/document-types/{{documentTypeId}}", "host": ["{{baseUrl}}"], "path": ["admin", "document-types", "{{documentTypeId}}"] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] } }]
+            },
+            {
+              "name": "7. Update Document Type",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+                ],
+                "url": { "raw": "{{baseUrl}}/admin/document-types/{{documentTypeId}}", "host": ["{{baseUrl}}"], "path": ["admin", "document-types", "{{documentTypeId}}"] },
+                "body": { "mode": "raw", "raw": "{\n  \"label\": \"Test Document (Updated)\",\n  \"maxSizeMB\": 8\n}" }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "pm.test('label updated', () => pm.expect(pm.response.json().data.documentType.label).to.eql('Test Document (Updated)'));"
+              ] } }]
+            },
+            {
+              "name": "9. Deactivate Document Type",
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+                "url": { "raw": "{{baseUrl}}/admin/document-types/{{documentTypeId}}", "host": ["{{baseUrl}}"], "path": ["admin", "document-types", "{{documentTypeId}}"] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "pm.test('isActive false', () => pm.expect(pm.response.json().data.documentType.isActive).to.be.false);"
+              ] } }]
+            }
+          ]
+        },
+        {
+          "name": "Public",
+          "item": [
+            {
+              "name": "8. List Active Document Types",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+                "url": { "raw": "{{baseUrl}}/document-types", "host": ["{{baseUrl}}"], "path": ["document-types"] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "pm.test('includes test_doc_type', () => pm.expect(pm.response.json().data.documentTypes.some((d) => d.key === 'test_doc_type')).to.be.true);"
+              ] } }]
+            },
+            {
+              "name": "10. List Active — After Deactivate (excluded)",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+                "url": { "raw": "{{baseUrl}}/document-types", "host": ["{{baseUrl}}"], "path": ["document-types"] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "pm.test('test_doc_type excluded', () => pm.expect(pm.response.json().data.documentTypes.some((d) => d.key === 'test_doc_type')).to.be.false);"
+              ] } }]
+            },
+            {
+              "name": "11. MANUAL — Upload (success, PDF or image)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+                "url": { "raw": "{{baseUrl}}/user/documents", "host": ["{{baseUrl}}"], "path": ["user", "documents"] },
+                "body": { "mode": "formdata", "formdata": [
+                  { "key": "file", "type": "file", "src": [] },
+                  { "key": "category", "value": "test_pdf_only", "type": "text" }
+                ] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                "pm.test('category stored', () => pm.expect(pm.response.json().data.document.category).to.eql('test_pdf_only'));"
+              ] } }]
+            },
+            {
+              "name": "12. MANUAL — Upload wrong file type for pdf-only (400)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+                "url": { "raw": "{{baseUrl}}/user/documents", "host": ["{{baseUrl}}"], "path": ["user", "documents"] },
+                "body": { "mode": "formdata", "formdata": [
+                  { "key": "file", "type": "file", "src": [], "description": "Attach a JPG/PNG here — test_pdf_only only accepts PDF." },
+                  { "key": "category", "value": "test_pdf_only", "type": "text" }
+                ] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                "pm.test('code INVALID_FILE_TYPE', () => pm.expect(pm.response.json().code).to.eql('INVALID_FILE_TYPE'));"
+              ] } }]
+            },
+            {
+              "name": "13. Upload — Unknown Category (400)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+                "url": { "raw": "{{baseUrl}}/user/documents", "host": ["{{baseUrl}}"], "path": ["user", "documents"] },
+                "body": { "mode": "formdata", "formdata": [
+                  { "key": "file", "type": "file", "src": [] },
+                  { "key": "category", "value": "not_a_real_category", "type": "text" }
+                ] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                "pm.test('code INVALID_CATEGORY', () => pm.expect(pm.response.json().code).to.eql('INVALID_CATEGORY'));"
+              ] } }]
+            },
+            {
+              "name": "14. MANUAL — Upload image, verify WebP conversion",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+                "url": { "raw": "{{baseUrl}}/user/documents", "host": ["{{baseUrl}}"], "path": ["user", "documents"] },
+                "body": { "mode": "formdata", "formdata": [
+                  { "key": "file", "type": "file", "src": [], "description": "Attach a JPG/PNG photo here." },
+                  { "key": "category", "value": "profile_photo", "type": "text" }
+                ] }
+              },
+              "event": [{ "listen": "test", "script": { "exec": [
+                "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                "pm.test('converted to webp', () => pm.expect(pm.response.json().data.document.mimeType).to.eql('image/webp'));"
+              ] } }]
+            }
+          ]
         }
       ]
     },

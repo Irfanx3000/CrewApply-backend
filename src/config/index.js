@@ -40,6 +40,16 @@ const config = {
   // Leave OFF for a real production release.
   smsDebug: process.env.SMS_DEBUG === 'true',
 
+  // Razorpay (payments). keyId is the ONLY value ever exposed to the client.
+  // keySecret signs orders + client verification; webhookSecret verifies webhooks.
+  // NOT added to validateEnv required[] — the app boots without them; payment
+  // endpoints throw a clear error until configured (see razorpay.service.js).
+  razorpay: {
+    keyId: process.env.RAZORPAY_KEY_ID,
+    keySecret: process.env.RAZORPAY_KEY_SECRET,
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+  },
+
   security: {
     // 10 rounds (~60ms) is a secure, OWASP-accepted default and ~4x faster than
     // 12 (~260ms) — the dominant cost of register/login. Override via env if needed.
@@ -67,6 +77,12 @@ const config = {
     passwordReset: {
       windowMs: 60 * 60 * 1000,
       max: 5,
+    },
+    // Create-order (payment initiation). Modest cap — a real user starts very few
+    // checkouts. The webhook is intentionally NOT rate-limited (gateway retries).
+    payment: {
+      windowMs: 15 * 60 * 1000,
+      max: 20,
     },
     general: {
       windowMs: 15 * 60 * 1000,

@@ -19,7 +19,9 @@ const {
   documentUpload,
   certificateUpload,
   visaUpload,
+  genericDocumentUpload,
 } = require('../middleware/upload.middleware');
+const requireDocumentViewToken = require('../middleware/documentViewToken.middleware');
 
 // ── Profile ───────────────────────────────────────────────────────────────────
 
@@ -63,6 +65,11 @@ router.delete('/visa/:id',    authenticate, validate(userValidation.documentIdPa
 // ── All documents ─────────────────────────────────────────────────────────────
 
 router.get('/documents',      authenticate,                                                              documentController.getAllDocuments);
+router.post('/documents',     authenticate, genericDocumentUpload.single('file'), validate(userValidation.uploadDocumentBody), documentController.uploadDocumentGeneric);
+router.get('/documents/:id/view-token', authenticate, validate(userValidation.documentIdParam),           documentController.getDocumentViewToken);
+// Deliberately NOT `authenticate` — see documentViewToken.middleware.js for why.
+router.get('/documents/:id/file', requireDocumentViewToken, validate(userValidation.documentIdParam),     documentController.getDocumentFile);
+router.delete('/documents/:id', authenticate, validate(userValidation.documentIdParam),                   documentController.deleteDocument);
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
 

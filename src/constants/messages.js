@@ -105,6 +105,57 @@ const AUTH_MESSAGES = Object.freeze({
   INTERNAL_ERROR: 'An unexpected error occurred. Please try again later.',
   TOO_MANY_REQUESTS: 'Too many requests. Please slow down and try again later.',
   VALIDATION_FAILED: 'Validation failed. Please check the provided data.',
+
+  // Jobs
+  JOB_CREATED: 'Job created successfully.',
+  JOB_UPDATED: 'Job updated successfully.',
+  JOB_FETCHED: 'Job fetched successfully.',
+  JOBS_FETCHED: 'Jobs fetched successfully.',
+  JOB_NOT_FOUND: 'Job not found.',
+  JOB_STATUS_UPDATED: 'Job status updated successfully.',
+  JOB_INVALID_STATUS_TRANSITION: 'Cannot change job status from "%s" to "%s".',
+  JOB_DELETED: 'Job deleted successfully.',
+  JOB_DELETE_NOT_ALLOWED: 'Only draft jobs can be deleted. Archive this job instead.',
+
+  // Subscriptions & payments
+  PLANS_FETCHED: 'Plans fetched successfully.',
+  PLAN_NOT_FOUND: 'This plan is not available.',
+  PLAN_CREATED: 'Plan created successfully.',
+  PLAN_UPDATED: 'Plan updated successfully.',
+  ORDER_CREATED: 'Payment order created.',
+  PAYMENT_IN_PROGRESS: 'A payment is already in progress. Please complete or wait for it before starting another.',
+  PAYMENT_ALREADY_MADE: 'Your previous payment already went through — your subscription is now active.',
+  ALREADY_SUBSCRIBED: 'You already have an active subscription. It will apply until it expires.',
+  PAYMENT_VERIFIED: 'Payment verified. Your subscription is now active.',
+  PAYMENT_VERIFICATION_FAILED: 'Payment could not be verified.',
+  PAYMENT_NOT_FOUND: 'Payment record not found.',
+  WEBHOOK_INVALID_SIGNATURE: 'Invalid webhook signature.',
+  SUBSCRIPTION_FETCHED: 'Subscription fetched successfully.',
+  SUBSCRIPTION_REQUIRED: 'An active subscription is required to access this feature.',
+  SUBSCRIPTION_TIER_REQUIRED: 'Your current plan does not include this feature. Please upgrade.',
+  PAYMENTS_NOT_CONFIGURED: 'Payments are not configured. Please try again later.',
+
+  // Applications
+  APPLICATION_SUBMITTED: 'Application submitted successfully.',
+  APPLICATION_FETCHED: 'Application fetched successfully.',
+  APPLICATIONS_FETCHED: 'Applications fetched successfully.',
+  APPLICATION_NOT_FOUND: 'Application not found.',
+  APPLICATION_ALREADY_EXISTS: 'You have already applied for this job.',
+  APPLICATION_WITHDRAWN: 'Application withdrawn successfully.',
+  APPLICATION_WITHDRAW_NOT_ALLOWED: 'This application can no longer be withdrawn.',
+  JOB_NOT_OPEN_FOR_APPLICATIONS: 'This job is no longer accepting applications.',
+  MISSING_REQUIRED_DOCUMENTS: 'You are missing required documents for this job.',
+  ELIGIBILITY_FETCHED: 'Eligibility fetched successfully.',
+
+  // Document Types
+  DOCUMENT_TYPE_CREATED: 'Document type created successfully.',
+  DOCUMENT_TYPE_UPDATED: 'Document type updated successfully.',
+  DOCUMENT_TYPE_DEACTIVATED: 'Document type deactivated successfully.',
+  DOCUMENT_TYPE_FETCHED: 'Document type fetched successfully.',
+  DOCUMENT_TYPES_FETCHED: 'Document types fetched successfully.',
+  DOCUMENT_TYPE_NOT_FOUND: 'Document type not found.',
+  DOCUMENT_TYPE_KEY_EXISTS: 'A document type with this key already exists.',
+  INVALID_DOCUMENT_CATEGORY: 'Invalid or inactive document category.',
 });
 
 module.exports = { AUTH_MESSAGES };

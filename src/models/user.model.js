@@ -206,6 +206,26 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
+    // ── Subscription (cached entitlement) ───────────────────────────────────────
+    // Denormalized from the Subscription collection so per-request gating is a
+    // zero-extra-query check on req.user (authenticate already loads the user).
+    // The Subscription/Payment collections remain the source of truth; these are
+    // written atomically on activation/expiry.
+    subscriptionTier: {
+      type: String,
+      enum: { values: ['start', 'premium', 'elite'], message: 'Invalid subscription tier.' },
+      default: null,
+    },
+    subscriptionStatus: {
+      type: String,
+      enum: { values: ['active', 'expired', 'cancelled'], message: 'Invalid subscription status.' },
+      default: null,
+    },
+    subscriptionExpiresAt: {
+      type: Date,
+      default: null,
+    },
+
     // ── Account status ─────────────────────────────────────────────────────────
     isActive: {
       type: Boolean,

@@ -8,7 +8,7 @@ const path = require('path');
 const UPLOADS_ROOT = path.join(__dirname, '..', 'uploads');
 
 // Ensure the standard subdirectories exist so multer/sharp can always write.
-for (const dir of ['temp', 'profile', 'resumes', 'certificates', 'company']) {
+for (const dir of ['temp', 'profile', 'resumes', 'certificates', 'company', 'documents']) {
   const full = path.join(UPLOADS_ROOT, dir);
   if (!fs.existsSync(full)) fs.mkdirSync(full, { recursive: true });
 }

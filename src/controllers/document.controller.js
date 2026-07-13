@@ -1,6 +1,7 @@
 'use strict';
 
 const documentService = require('../services/document.service');
+const tokenService = require('../services/token.service');
 const asyncHandler = require('../utils/asyncHandler');
 const { successResponse } = require('../utils/apiResponse');
 const AppError = require('../utils/AppError');
@@ -185,6 +186,37 @@ const getVisa = asyncHandler(async (req, res) => {
   return successResponse(res, AUTH_MESSAGES.VISA_FETCHED, { documents: docs });
 });
 
+// ── Generic upload (admin-configurable document types) ────────────────────────
+
+const uploadDocumentGeneric = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    throw new AppError(AUTH_MESSAGES.NO_FILE_UPLOADED, HTTP_STATUS.BAD_REQUEST, 'NO_FILE');
+  }
+
+  const doc = await documentService.uploadDocumentGeneric(req.user._id, req.file, req.body.category, req.body.metadata);
+
+  return successResponse(res, AUTH_MESSAGES.DOCUMENT_UPLOADED, { document: doc }, HTTP_STATUS.CREATED);
+});
+
+// ── View ──────────────────────────────────────────────────────────────────────
+
+const getDocumentViewToken = asyncHandler(async (req, res) => {
+  // Confirms ownership before minting a token — never hand out a token for a
+  // document that isn't (or is no longer) this user's.
+  await documentService.getDocumentFile(req.user._id, req.params.id);
+  const token = tokenService.signDocumentViewToken(req.user._id, req.params.id);
+
+  return successResponse(res, AUTH_MESSAGES.DOCUMENT_FETCHED, { token });
+});
+
+const getDocumentFile = asyncHandler(async (req, res) => {
+  const doc = await documentService.getDocumentFile(req.viewUserId, req.params.id);
+
+  res.setHeader('Content-Type', doc.mimeType);
+  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.originalName)}"`);
+  return res.sendFile(doc.absolutePath);
+});
+
 // ── Delete (soft) ─────────────────────────────────────────────────────────────
 
 const deleteDocument = asyncHandler(async (req, res) => {
@@ -215,6 +247,9 @@ module.exports = {
   getMedical,
   uploadVisa,
   getVisa,
+  uploadDocumentGeneric,
+  getDocumentViewToken,
+  getDocumentFile,
   deleteDocument,
   getAllDocuments,
 };

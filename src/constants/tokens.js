@@ -5,6 +5,7 @@ const TOKEN_TYPES = Object.freeze({
   REFRESH: 'refresh',
   EMAIL_VERIFICATION: 'email_verification',
   PASSWORD_RESET: 'password_reset',
+  DOCUMENT_VIEW: 'document_view',
 });
 
 const COOKIE_NAMES = Object.freeze({

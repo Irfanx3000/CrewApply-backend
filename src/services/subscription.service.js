@@ -1,0 +1,374 @@
+'use strict';
+
+const crypto = require('crypto');
+const Plan = require('../models/plan.model');
+const Payment = require('../models/payment.model');
+const Subscription = require('../models/subscription.model');
+const User = require('../models/user.model');
+const razorpayService = require('./razorpay.service');
+const auditService = require('./audit.service');
+const AppError = require('../utils/AppError');
+const { config } = require('../config');
+const { HTTP_STATUS } = require('../constants/httpStatus');
+const { AUTH_MESSAGES } = require('../constants/messages');
+const { AUDIT_EVENTS } = require('../constants/audit');
+
+// An open ('created') order older than this is treated as abandoned and released,
+// so a user who bailed out of an earlier checkout isn't locked out forever.
+const PENDING_TTL_MS = 15 * 60 * 1000;
+
+// A user may renew (same tier) only once their plan is within this window of expiry.
+// Renewing extends the period instead of discarding the remaining days. Kept in sync
+// with RENEW_WINDOW_DAYS on the frontend (subscriptionDisplay.js).
+const RENEWAL_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+const ctxOf = (req) => ({
+  ipAddress: req?.ip || null,
+  userAgent: req?.get?.('user-agent') || null,
+});
+
+const audit = (event, userId, req, metadata = {}) =>
+  auditService.log({ event, userId, ...ctxOf(req), metadata }).catch(() => {});
+
+// ── Public plan catalogue ─────────────────────────────────────────────────────
+
+const toClientPlan = (p) => ({
+  id: p.code,
+  tier: p.tier,
+  billingCycle: p.billingCycle,
+  name: p.name,
+  subtitle: p.subtitle,
+  amount: p.amount, // paise
+  launchAmount: p.launchAmount,
+  currency: p.currency,
+  intervalDays: p.intervalDays,
+  features: p.features,
+  jobApplicationLimit: p.jobApplicationLimit,
+});
+
+const getActivePlans = async () => {
+  const plans = await Plan.find({ isActive: true }).sort({ displayOrder: 1, amount: 1 }).lean();
+  const grouped = { monthly: [], yearly: [] };
+  for (const p of plans) {
+    (grouped[p.billingCycle] || (grouped[p.billingCycle] = [])).push(toClientPlan(p));
+  }
+  return grouped;
+};
+
+// First subscription to this tier gets the launch price (if the plan defines one).
+const computeAmount = async (plan, userId) => {
+  if (plan.launchAmount != null) {
+    const priorPaid = await Payment.exists({ user: userId, tier: plan.tier, status: 'paid' });
+    if (!priorPaid) return plan.launchAmount;
+  }
+  return plan.amount;
+};
+
+// ── Create order (with the anti-double-charge guard) ──────────────────────────
+
+const createOrder = async ({ user, tier, billingCycle }, req) => {
+  const plan = await Plan.findOne({ tier, billingCycle, isActive: true });
+  if (!plan) {
+    throw new AppError(AUTH_MESSAGES.PLAN_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'PLAN_NOT_FOUND');
+  }
+
+  // 1) Release abandoned open orders so the lock isn't held forever.
+  await Payment.updateMany(
+    { user: user._id, status: 'created', createdAt: { $lt: new Date(Date.now() - PENDING_TTL_MS) } },
+    { $set: { status: 'failed' } }
+  );
+
+  // 2) Handle any in-progress ('created') order. The critical distinction:
+  //      • the user actually PAID but confirmation never reached us  → activate it
+  //        and BLOCK a second charge ("don't get scammed").
+  //      • the user simply CANCELLED / abandoned the checkout          → release it
+  //        so they're free to pick a different plan (no false lock-out).
+  //    Only Razorpay knows which happened, so we ask it directly.
+  const openPayment = await Payment.findOne({ user: user._id, status: 'created' });
+  if (openPayment) {
+    const { paid } = await reconcilePendingOrder(openPayment, req);
+    if (paid) {
+      // A real payment went through — we've now activated it. Refuse a 2nd charge.
+      throw new AppError(
+        AUTH_MESSAGES.PAYMENT_ALREADY_MADE,
+        HTTP_STATUS.CONFLICT,
+        'PAYMENT_ALREADY_MADE'
+      );
+    }
+    // Not paid → the earlier checkout was abandoned.
+    if (openPayment.tier === tier && openPayment.billingCycle === billingCycle) {
+      // Same plan → hand back the SAME order (Razorpay refuses to pay it twice).
+      return orderResponse(openPayment, plan, true);
+    }
+    // Different plan → release the abandoned order so a fresh one can be created.
+    await Payment.updateOne(
+      { _id: openPayment._id, status: 'created' },
+      { $set: { status: 'cancelled' } }
+    );
+  }
+
+  // 3) Block buying while an active subscription exists — EXCEPT a genuine renewal:
+  //    same tier, and within the renewal window of expiry. A renewal extends the
+  //    plan (see activate) instead of opening a redundant second subscription.
+  if (user.subscriptionExpiresAt && user.subscriptionExpiresAt > new Date()) {
+    const msLeft = user.subscriptionExpiresAt.getTime() - Date.now();
+    const isRenewal = msLeft <= RENEWAL_WINDOW_MS && user.subscriptionTier === tier;
+    if (!isRenewal) {
+      throw new AppError(AUTH_MESSAGES.ALREADY_SUBSCRIBED, HTTP_STATUS.CONFLICT, 'ALREADY_SUBSCRIBED');
+    }
+  }
+
+  // 4) Server computes the amount — never the client.
+  const amount = await computeAmount(plan, user._id);
+  const receipt = `rcpt_${crypto.randomBytes(10).toString('hex')}`;
+
+  const order = await razorpayService.createOrder({
+    amount,
+    currency: plan.currency,
+    receipt,
+    notes: { userId: String(user._id), tier, billingCycle },
+  });
+
+  // 5) Persist the Payment. The partial-unique index guarantees only one open
+  //    order per user — a racing request hits E11000 and we reuse the winner.
+  let payment;
+  try {
+    payment = await Payment.create({
+      user: user._id,
+      plan: plan._id,
+      amount,
+      currency: plan.currency,
+      tier,
+      billingCycle,
+      status: 'created',
+      gatewayOrderId: order.id,
+      receipt,
+      metadata: { order },
+    });
+  } catch (err) {
+    if (err && err.code === 11000) {
+      const existing = await Payment.findOne({ user: user._id, status: 'created' });
+      if (existing) return orderResponse(existing, plan, true);
+    }
+    throw err;
+  }
+
+  audit(AUDIT_EVENTS.PAYMENT_INITIATED, user._id, req, { orderId: order.id, amount, tier, billingCycle });
+  return orderResponse(payment, plan, false);
+};
+
+const orderResponse = (payment, plan, reused) => ({
+  orderId: payment.gatewayOrderId,
+  amount: payment.amount,
+  currency: payment.currency,
+  keyId: config.razorpay.keyId, // public key only
+  planId: plan.code,
+  planName: plan.name,
+  tier: payment.tier,
+  billingCycle: payment.billingCycle,
+  reused,
+});
+
+// ── Idempotent activation (shared by /verify and the webhook) ─────────────────
+
+const activate = async (payment, { gatewayPaymentId = null, signature = null } = {}, req) => {
+  // Atomic guard: only the FIRST caller transitions the order to 'paid'. Concurrent
+  // verify + webhook are safe — the loser gets null and returns the existing sub.
+  // We match created OR a locally-released ('cancelled'/'failed') order too: if a
+  // genuinely-paid order was optimistically released (e.g. a plan-switch race), a
+  // real captured-payment signal must still activate it exactly once.
+  const paid = await Payment.findOneAndUpdate(
+    { _id: payment._id, status: { $in: ['created', 'cancelled', 'failed'] } },
+    { $set: { status: 'paid', gatewayPaymentId, gatewaySignature: signature } },
+    { new: true }
+  );
+
+  if (!paid) {
+    // Already processed → return the existing subscription (true idempotency).
+    const existing = await Subscription.findOne({ payment: payment._id });
+    return existing;
+  }
+
+  const plan = await Plan.findById(paid.plan);
+  const now = new Date();
+
+  // Renewal-aware period: if the user still has an unexpired active subscription,
+  // stack the new interval on top of the remaining time instead of throwing days
+  // away; otherwise start from now.
+  const existingActive = await Subscription.findOne({ user: paid.user, status: 'active' })
+    .sort({ currentPeriodEnd: -1 });
+  const base = existingActive && existingActive.currentPeriodEnd > now ? existingActive.currentPeriodEnd : now;
+  const periodEnd = new Date(base.getTime() + (plan?.intervalDays || 30) * 24 * 60 * 60 * 1000);
+
+  // Supersede the prior active subscription (renewal replaces it with the extended one).
+  await Subscription.updateMany(
+    { user: paid.user, status: 'active' },
+    { $set: { status: 'cancelled' } }
+  );
+
+  const subscription = await Subscription.create({
+    user: paid.user,
+    plan: paid.plan,
+    tier: paid.tier,
+    billingCycle: paid.billingCycle,
+    status: 'active',
+    currentPeriodStart: now,
+    currentPeriodEnd: periodEnd,
+    payment: paid._id,
+  });
+
+  paid.subscription = subscription._id;
+  await paid.save();
+
+  // Update the cached entitlement on the user for fast gating.
+  await User.findByIdAndUpdate(paid.user, {
+    $set: {
+      subscriptionTier: paid.tier,
+      subscriptionStatus: 'active',
+      subscriptionExpiresAt: periodEnd,
+    },
+  });
+
+  audit(AUDIT_EVENTS.PAYMENT_SUCCEEDED, paid.user, req, { orderId: paid.gatewayOrderId, amount: paid.amount });
+  audit(AUDIT_EVENTS.SUBSCRIPTION_CREATED, paid.user, req, { tier: paid.tier, periodEnd });
+
+  return subscription;
+};
+
+// ── Reconcile a pending order against Razorpay ────────────────────────────────
+//
+// Given a locally-'created' order, ask Razorpay whether it was actually paid.
+//  • Not paid (user cancelled / abandoned)  → { paid:false }  (caller may release it)
+//  • Paid (confirmation just never reached us) → activate it → { paid:true }
+// This is the guard that stops a user from being charged twice when a real payment's
+// verify/webhook confirmation was delayed or lost.
+const reconcilePendingOrder = async (payment, req) => {
+  let order;
+  try {
+    order = await razorpayService.fetchOrder(payment.gatewayOrderId);
+  } catch {
+    // Can't reach the gateway — fail safe by treating it as NOT paid (don't lock
+    // the user out; the webhook remains the authoritative activation path).
+    return { paid: false };
+  }
+
+  const isPaid =
+    order &&
+    (order.status === 'paid' || Number(order.amount_paid || 0) >= payment.amount);
+  if (!isPaid) return { paid: false };
+
+  // Find the captured payment id to record on activation (best-effort).
+  let capturedId = null;
+  try {
+    const list = await razorpayService.fetchOrderPayments(payment.gatewayOrderId);
+    const items = (list && list.items) || [];
+    capturedId = (items.find((p) => p.status === 'captured') || items[0] || {}).id || null;
+  } catch {
+    /* non-fatal — activation doesn't require the payment id */
+  }
+
+  await activate(payment, { gatewayPaymentId: capturedId, signature: null }, req);
+  return { paid: true };
+};
+
+// ── Client verify path ────────────────────────────────────────────────────────
+
+const verifyPayment = async ({ user, orderId, paymentId, signature }, req) => {
+  const ok = razorpayService.verifyPaymentSignature({ orderId, paymentId, signature });
+  if (!ok) {
+    throw new AppError(AUTH_MESSAGES.PAYMENT_VERIFICATION_FAILED, HTTP_STATUS.BAD_REQUEST, 'INVALID_SIGNATURE');
+  }
+
+  const payment = await Payment.findOne({ gatewayOrderId: orderId });
+  if (!payment) {
+    throw new AppError(AUTH_MESSAGES.PAYMENT_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'PAYMENT_NOT_FOUND');
+  }
+  // Ownership — a user can only confirm their OWN order.
+  if (String(payment.user) !== String(user._id)) {
+    throw new AppError(AUTH_MESSAGES.FORBIDDEN, HTTP_STATUS.FORBIDDEN, 'FORBIDDEN');
+  }
+
+  await activate(payment, { gatewayPaymentId: paymentId, signature }, req);
+  return getMySubscription(user._id);
+};
+
+// ── Webhook path (authoritative) ──────────────────────────────────────────────
+
+const handleWebhook = async ({ rawBody, signature }, req) => {
+  if (!razorpayService.verifyWebhookSignature(rawBody, signature)) {
+    throw new AppError(AUTH_MESSAGES.WEBHOOK_INVALID_SIGNATURE, HTTP_STATUS.UNAUTHORIZED, 'INVALID_WEBHOOK_SIGNATURE');
+  }
+
+  let event;
+  try {
+    const text = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody;
+    event = JSON.parse(text);
+  } catch {
+    throw new AppError('Invalid webhook payload.', HTTP_STATUS.BAD_REQUEST, 'INVALID_PAYLOAD');
+  }
+
+  audit(AUDIT_EVENTS.WEBHOOK_RECEIVED, null, req, { event: event.event });
+
+  const paymentEntity = event?.payload?.payment?.entity;
+  const orderEntity = event?.payload?.order?.entity;
+  const orderId = paymentEntity?.order_id || orderEntity?.id;
+
+  if (!orderId) return { received: true };
+
+  const payment = await Payment.findOne({ gatewayOrderId: orderId });
+  if (!payment) return { received: true }; // not one of ours — ignore
+
+  if (event.event === 'payment.captured' || event.event === 'order.paid') {
+    // Defense in depth: the amount actually paid must match what we recorded.
+    const paidAmount = paymentEntity?.amount ?? orderEntity?.amount;
+    if (paidAmount != null && Number(paidAmount) !== payment.amount) {
+      audit(AUDIT_EVENTS.PAYMENT_FAILED, payment.user, req, { orderId, reason: 'amount_mismatch', paidAmount });
+      return { received: true };
+    }
+    await activate(payment, { gatewayPaymentId: paymentEntity?.id || null, signature: null }, req);
+  } else if (event.event === 'payment.failed') {
+    await Payment.updateOne({ _id: payment._id, status: 'created' }, { $set: { status: 'failed' } });
+    audit(AUDIT_EVENTS.PAYMENT_FAILED, payment.user, req, { orderId });
+  }
+
+  return { received: true };
+};
+
+// ── Current subscription (with lazy expiry) ───────────────────────────────────
+
+const getMySubscription = async (userId) => {
+  const sub = await Subscription.findOne({ user: userId, status: 'active' })
+    .sort({ currentPeriodEnd: -1 })
+    .populate('plan');
+
+  if (!sub) return { active: false, tier: null, status: 'none', currentPeriodEnd: null };
+
+  // Lazy expiry — flip status + clear the user cache the moment we notice it lapsed.
+  if (sub.currentPeriodEnd <= new Date()) {
+    sub.status = 'expired';
+    await sub.save();
+    await User.findByIdAndUpdate(userId, {
+      $set: { subscriptionStatus: 'expired', subscriptionExpiresAt: sub.currentPeriodEnd },
+    });
+    audit(AUDIT_EVENTS.SUBSCRIPTION_EXPIRED, userId, null, { tier: sub.tier });
+    return { active: false, tier: null, status: 'expired', currentPeriodEnd: sub.currentPeriodEnd };
+  }
+
+  return {
+    active: true,
+    tier: sub.tier,
+    status: sub.status,
+    billingCycle: sub.billingCycle,
+    currentPeriodStart: sub.currentPeriodStart,
+    currentPeriodEnd: sub.currentPeriodEnd,
+    plan: sub.plan ? toClientPlan(sub.plan) : null,
+  };
+};
+
+module.exports = {
+  getActivePlans,
+  createOrder,
+  verifyPayment,
+  handleWebhook,
+  getMySubscription,
+};

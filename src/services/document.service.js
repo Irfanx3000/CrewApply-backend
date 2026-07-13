@@ -1,12 +1,42 @@
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
-const sharp = require('sharp');
 const Document = require('../models/document.model');
+const DocumentType = require('../models/documentType.model');
 const User = require('../models/user.model');
-const { saveFile, deleteFile } = require('./storage.service');
+const { saveFile } = require('./storage.service');
+const { convertToWebp } = require('../utils/image.util');
+const { detectFileMimeType } = require('../utils/fileSignature.util');
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
+const { AUTH_MESSAGES } = require('../constants/messages');
+
+// Real (magic-byte-detected) mime values only — never the client-declared one.
+const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp'];
+const PDF_MIME = 'application/pdf';
+
+const deleteTempFile = (tempPath) => {
+  if (tempPath && fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+};
+
+/**
+ * Verifies a saved file's REAL content type (via magic bytes) against an
+ * allow-list, ignoring the client-declared Content-Type/extension entirely.
+ * Deletes the temp file and throws a 400 on any mismatch or unrecognized file.
+ *
+ * @param {string} filePath
+ * @param {string[]} allowedMimes
+ * @returns {string} the detected mime type (only returned on success)
+ */
+const assertRealFileType = (filePath, allowedMimes) => {
+  const detected = detectFileMimeType(filePath);
+  if (!detected || !allowedMimes.includes(detected)) {
+    deleteTempFile(filePath);
+    throw new AppError(AUTH_MESSAGES.INVALID_FILE_TYPE, HTTP_STATUS.BAD_REQUEST, 'INVALID_FILE_TYPE');
+  }
+  return detected;
+};
 
 // ── Profile completion ────────────────────────────────────────────────────────
 
@@ -78,7 +108,7 @@ const archivePrevious = async (userId, category) => {
  * @param {object}  [opts.metadata]
  * @param {string}  opts.destDir    - subdirectory inside uploads/
  */
-const uploadDocument = async ({ userId, file, category, type, metadata, destDir }) => {
+const uploadDocument = async ({ userId, file, category, type, metadata, destDir, mimeType }) => {
   const relativePath = saveFile(file.path, destDir, file.filename);
 
   const doc = await Document.create({
@@ -88,7 +118,8 @@ const uploadDocument = async ({ userId, file, category, type, metadata, destDir 
     originalName: file.originalname,
     storedName: file.filename,
     path: relativePath,
-    mimeType: file.mimetype,
+    // Prefer the magic-byte-detected mime type over the client-declared one.
+    mimeType: mimeType || file.mimetype,
     size: file.size,
     metadata: metadata || {},
   });
@@ -99,19 +130,13 @@ const uploadDocument = async ({ userId, file, category, type, metadata, destDir 
 // ── Profile photo ─────────────────────────────────────────────────────────────
 
 const uploadProfilePhoto = async (userId, file) => {
+  assertRealFileType(file.path, IMAGE_MIMES);
+
   const outputFilename = `${path.parse(file.filename).name}.webp`;
   const outputPath = path.join(path.dirname(file.path), '..', 'profile', outputFilename);
 
-  // Process with Sharp: resize to 400×400 WebP
-  await sharp(file.path)
-    .resize(400, 400, { fit: 'cover', position: 'centre' })
-    .webp({ quality: 85 })
-    .toFile(outputPath);
-
-  // Remove temp file
-  deleteFile(null); // sharp already wrote to final dir directly — just delete temp
-  const fs = require('fs');
-  if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+  await convertToWebp(file.path, outputPath, { resize: [400, 400, { fit: 'cover', position: 'centre' }] });
+  deleteTempFile(file.path);
 
   const relativePath = `uploads/profile/${outputFilename}`;
 
@@ -137,8 +162,9 @@ const uploadProfilePhoto = async (userId, file) => {
 // ── Resume ────────────────────────────────────────────────────────────────────
 
 const uploadResume = async (userId, file) => {
+  const mimeType = assertRealFileType(file.path, [PDF_MIME]);
   await archivePrevious(userId, 'resume');
-  return uploadDocument({ userId, file, category: 'resume', destDir: 'resumes' });
+  return uploadDocument({ userId, file, category: 'resume', destDir: 'resumes', mimeType });
 };
 
 const getResume = (userId) =>
@@ -149,6 +175,7 @@ const getResume = (userId) =>
 const uploadCertificates = async (userId, files, metadataArray) => {
   const docs = [];
   for (let i = 0; i < files.length; i++) {
+    const mimeType = assertRealFileType(files[i].path, [PDF_MIME, ...IMAGE_MIMES]);
     const meta = metadataArray?.[i] || {};
     const { type, issueDate, expiryDate, issuingAuthority } = meta;
     const doc = await uploadDocument({
@@ -158,6 +185,7 @@ const uploadCertificates = async (userId, files, metadataArray) => {
       type: type || null,
       metadata: { issueDate, expiryDate, issuingAuthority },
       destDir: 'certificates',
+      mimeType,
     });
     docs.push(doc);
   }
@@ -182,8 +210,9 @@ const getCertificates = (userId) =>
 // ── Passport ──────────────────────────────────────────────────────────────────
 
 const uploadPassport = async (userId, file, metadata) => {
+  const mimeType = assertRealFileType(file.path, [PDF_MIME, ...IMAGE_MIMES]);
   await archivePrevious(userId, 'passport');
-  return uploadDocument({ userId, file, category: 'passport', metadata, destDir: 'passport' });
+  return uploadDocument({ userId, file, category: 'passport', metadata, destDir: 'passport', mimeType });
 };
 
 const getPassport = (userId) =>
@@ -192,8 +221,9 @@ const getPassport = (userId) =>
 // ── CDC ───────────────────────────────────────────────────────────────────────
 
 const uploadCdc = async (userId, file, metadata) => {
+  const mimeType = assertRealFileType(file.path, [PDF_MIME, ...IMAGE_MIMES]);
   await archivePrevious(userId, 'cdc');
-  return uploadDocument({ userId, file, category: 'cdc', metadata, destDir: 'cdc' });
+  return uploadDocument({ userId, file, category: 'cdc', metadata, destDir: 'cdc', mimeType });
 };
 
 const getCdc = (userId) =>
@@ -202,8 +232,9 @@ const getCdc = (userId) =>
 // ── Medical ───────────────────────────────────────────────────────────────────
 
 const uploadMedical = async (userId, file, metadata) => {
+  const mimeType = assertRealFileType(file.path, [PDF_MIME, ...IMAGE_MIMES]);
   await archivePrevious(userId, 'medical');
-  return uploadDocument({ userId, file, category: 'medical', metadata, destDir: 'medical' });
+  return uploadDocument({ userId, file, category: 'medical', metadata, destDir: 'medical', mimeType });
 };
 
 const getMedical = (userId) =>
@@ -214,6 +245,7 @@ const getMedical = (userId) =>
 const uploadVisa = async (userId, files, metadataArray) => {
   const docs = [];
   for (let i = 0; i < files.length; i++) {
+    const mimeType = assertRealFileType(files[i].path, [PDF_MIME, ...IMAGE_MIMES]);
     const meta = metadataArray?.[i] || {};
     const doc = await uploadDocument({
       userId,
@@ -221,6 +253,7 @@ const uploadVisa = async (userId, files, metadataArray) => {
       category: 'visa',
       metadata: { country: meta.country, visaNumber: meta.visaNumber, expiryDate: meta.expiryDate },
       destDir: 'visa',
+      mimeType,
     });
     docs.push(doc);
   }
@@ -229,6 +262,87 @@ const uploadVisa = async (userId, files, metadataArray) => {
 
 const getVisa = (userId) =>
   Document.find({ user: userId, category: 'visa', status: 'active' }).lean();
+
+// ── Generic upload (admin-configurable document types) ────────────────────────
+
+/**
+ * Uploads a document for any active DocumentType. Unlike the per-category
+ * helpers above, the accepted file types/max size are looked up dynamically
+ * (not enforced by multer's static per-route config), so this function does
+ * the strict validation itself and cleans up the temp file on any rejection.
+ *
+ * @param {string} userId
+ * @param {object} file       - req.file from multer (genericDocumentUpload)
+ * @param {string} category   - DocumentType.key
+ * @param {string} [metadataRaw] - optional JSON string
+ */
+const uploadDocumentGeneric = async (userId, file, category, metadataRaw) => {
+  const docType = await DocumentType.findOne({ key: category, isActive: true }).lean();
+  if (!docType) {
+    deleteTempFile(file.path);
+    throw new AppError(AUTH_MESSAGES.INVALID_DOCUMENT_CATEGORY, HTTP_STATUS.BAD_REQUEST, 'INVALID_CATEGORY');
+  }
+
+  const allowedMimes =
+    docType.acceptedFileTypes === 'pdf' ? [PDF_MIME] :
+    docType.acceptedFileTypes === 'image' ? IMAGE_MIMES :
+    [PDF_MIME, ...IMAGE_MIMES];
+
+  // Ignores file.mimetype (client-declared, spoofable) — validates the file's
+  // actual content via its magic-byte signature instead.
+  const detectedMime = assertRealFileType(file.path, allowedMimes);
+  const isImage = IMAGE_MIMES.includes(detectedMime);
+
+  if (file.size > docType.maxSizeMB * 1024 * 1024) {
+    deleteTempFile(file.path);
+    throw new AppError(AUTH_MESSAGES.FILE_TOO_LARGE, HTTP_STATUS.BAD_REQUEST, 'FILE_TOO_LARGE');
+  }
+
+  if (!docType.allowMultiple) {
+    await archivePrevious(userId, docType.key);
+  }
+
+  let relativePath;
+  let mimeType = detectedMime;
+  let storedName = file.filename;
+  let size = file.size;
+
+  if (isImage) {
+    // No forced crop (unlike profile photo) — passport/certificate scans must
+    // keep their aspect ratio.
+    const outputFilename = `${path.parse(file.filename).name}.webp`;
+    const outputPath = path.join(path.dirname(file.path), '..', 'documents', outputFilename);
+    await convertToWebp(file.path, outputPath, { resize: { width: 1600, withoutEnlargement: true } });
+    deleteTempFile(file.path);
+
+    relativePath = `uploads/documents/${outputFilename}`;
+    mimeType = 'image/webp';
+    storedName = outputFilename;
+    size = fs.statSync(outputPath).size;
+  } else {
+    relativePath = saveFile(file.path, 'documents', file.filename);
+  }
+
+  let metadata = {};
+  if (metadataRaw) {
+    try {
+      metadata = typeof metadataRaw === 'string' ? JSON.parse(metadataRaw) : metadataRaw;
+    } catch {
+      metadata = {};
+    }
+  }
+
+  return Document.create({
+    user: userId,
+    category: docType.key,
+    originalName: file.originalname,
+    storedName,
+    path: relativePath,
+    mimeType,
+    size,
+    metadata,
+  });
+};
 
 // ── Delete (soft) ─────────────────────────────────────────────────────────────
 
@@ -253,6 +367,27 @@ const getAllDocuments = async (userId) => {
   }, {});
 };
 
+// ── View (owner-only, streamed via a short-lived view token — see token.service.js) ──
+
+/**
+ * Resolves a document to its on-disk location, verifying ownership. Used by
+ * both the view-token minting step and the actual file-serving route — always
+ * re-checked against current DB state, never trusts the token alone.
+ */
+const getDocumentFile = async (userId, docId) => {
+  const doc = await Document.findOne({ _id: docId, user: userId, status: 'active' }).lean();
+  if (!doc) {
+    throw new AppError(AUTH_MESSAGES.DOCUMENT_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'NOT_FOUND');
+  }
+
+  const absolutePath = path.join(__dirname, '..', doc.path);
+  if (!fs.existsSync(absolutePath)) {
+    throw new AppError(AUTH_MESSAGES.DOCUMENT_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'NOT_FOUND');
+  }
+
+  return { absolutePath, mimeType: doc.mimeType, originalName: doc.originalName };
+};
+
 module.exports = {
   computeProfileCompletion,
   uploadProfilePhoto,
@@ -268,6 +403,8 @@ module.exports = {
   getMedical,
   uploadVisa,
   getVisa,
+  uploadDocumentGeneric,
   deleteDocument,
   getAllDocuments,
+  getDocumentFile,
 };

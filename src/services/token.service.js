@@ -52,6 +52,45 @@ const verifyAccessToken = (token) => {
   }
 };
 
+// ── Document View Token ───────────────────────────────────────────────────────
+// Short-lived, single-document-scoped token — lets a document be opened by a
+// URL alone (native "open externally"/<Image> flows can't attach a custom
+// Authorization header), without exposing the file to anyone but its owner
+// and without handing out a full-privilege access token in a URL.
+
+/**
+ * @param {string} userId
+ * @param {string} documentId
+ * @returns {string} Signed JWT, valid for 5 minutes, scoped to this one document.
+ */
+const signDocumentViewToken = (userId, documentId) => {
+  return jwt.sign(
+    { sub: userId.toString(), docId: documentId.toString(), type: TOKEN_TYPES.DOCUMENT_VIEW },
+    config.jwt.accessSecret,
+    { expiresIn: '5m' }
+  );
+};
+
+/**
+ * @param {string} token
+ * @returns {{ sub: string, docId: string, type: string }}
+ * @throws {AppError} When token is invalid or expired.
+ */
+const verifyDocumentViewToken = (token) => {
+  try {
+    const payload = jwt.verify(token, config.jwt.accessSecret);
+
+    if (payload.type !== TOKEN_TYPES.DOCUMENT_VIEW) {
+      throw new AppError(AUTH_MESSAGES.UNAUTHORIZED, HTTP_STATUS.UNAUTHORIZED, 'INVALID_TOKEN');
+    }
+
+    return payload;
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError(AUTH_MESSAGES.UNAUTHORIZED, HTTP_STATUS.UNAUTHORIZED, 'INVALID_TOKEN');
+  }
+};
+
 // ── Refresh Token ─────────────────────────────────────────────────────────────
 
 /**
@@ -173,6 +212,8 @@ const revokeAllRefreshTokens = async (userId) => {
 module.exports = {
   signAccessToken,
   verifyAccessToken,
+  signDocumentViewToken,
+  verifyDocumentViewToken,
   createRefreshToken,
   validateRefreshToken,
   rotateRefreshToken,

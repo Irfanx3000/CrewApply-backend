@@ -2,18 +2,6 @@
 
 const mongoose = require('mongoose');
 
-const DOCUMENT_CATEGORIES = Object.freeze([
-  'resume',
-  'certificate',
-  'stcw',
-  'passport',
-  'cdc',
-  'medical',
-  'visa',
-  'profile_photo',
-  'others',
-]);
-
 const DOCUMENT_STATUSES = Object.freeze([
   'active',
   'archived',
@@ -31,10 +19,13 @@ const documentSchema = new mongoose.Schema(
       index: true,
     },
 
+    // References DocumentType.key — validated dynamically at the request layer
+    // (see documentType.service.js) rather than a static schema enum, since the
+    // set of valid categories is now admin-configurable.
     category: {
       type: String,
       required: true,
-      enum: { values: DOCUMENT_CATEGORIES, message: 'Invalid document category.' },
+      trim: true,
     },
 
     // Sub-type within a category — e.g. 'COC', 'GMDSS', 'Basic Safety' for stcw
@@ -93,5 +84,4 @@ documentSchema.index({ user: 1, category: 1 });
 documentSchema.index({ user: 1, category: 1, status: 1 });
 
 module.exports = mongoose.model('Document', documentSchema);
-module.exports.DOCUMENT_CATEGORIES = DOCUMENT_CATEGORIES;
 module.exports.DOCUMENT_STATUSES = DOCUMENT_STATUSES;

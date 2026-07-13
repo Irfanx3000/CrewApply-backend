@@ -60,6 +60,16 @@ const passwordResetLimiter = createLimiter({
 });
 
 /**
+ * Applied to payment order creation (checkout initiation).
+ * The webhook is intentionally NOT limited here (payment gateways retry).
+ */
+const paymentLimiter = createLimiter({
+  windowMs: config.rateLimit.payment.windowMs,
+  max: config.rateLimit.payment.max,
+  message: 'Too many payment attempts. Please wait a few minutes and try again.',
+});
+
+/**
  * General-purpose limiter for all API routes.
  * 100 requests per 15 minutes per IP.
  */
@@ -68,4 +78,4 @@ const generalLimiter = createLimiter({
   max: config.rateLimit.general.max,
 });
 
-module.exports = { authLimiter, otpLimiter, passwordResetLimiter, generalLimiter };
+module.exports = { authLimiter, otpLimiter, passwordResetLimiter, paymentLimiter, generalLimiter };

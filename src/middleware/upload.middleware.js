@@ -106,10 +106,27 @@ const visaUpload = multer({
   ),
 });
 
+/**
+ * Generic document upload for admin-configurable DocumentTypes — PDF or image,
+ * 20 MB ceiling. The per-type mime/size rules (from DocumentType.acceptedFileTypes/
+ * maxSizeMB) can't be enforced here since `req.body.category` isn't reliably
+ * populated yet when this fileFilter runs; document.service.js's
+ * uploadDocumentGeneric() does that strict check after the file lands in temp.
+ */
+const genericDocumentUpload = multer({
+  storage: tempStorage,
+  limits: { fileSize: 20 * MB },
+  fileFilter: makeFilter(
+    ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'],
+    'document'
+  ),
+});
+
 module.exports = {
   profileUpload,
   resumeUpload,
   documentUpload,
   certificateUpload,
   visaUpload,
+  genericDocumentUpload,
 };

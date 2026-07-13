@@ -1,0 +1,282 @@
+{
+  "info": {
+    "name": "CrewApply — Subscriptions",
+    "description": "End-to-end subscription/payment testing. Run the requests top to bottom. The 'Simulate Paid Webhook' request signs the payload with CryptoJS so you can activate a subscription without the checkout UI or a real payment. Set the collection variables (baseUrl, email, password, webhookSecret) first.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000/api/v1", "type": "string" },
+    { "key": "email", "value": "you@example.com", "type": "string" },
+    { "key": "password", "value": "password", "type": "string" },
+    { "key": "adminEmail", "value": "admin@example.com", "type": "string" },
+    { "key": "adminPassword", "value": "password", "type": "string" },
+    { "key": "webhookSecret", "value": "359d7a6302fea80867bd96df3d816197ee5923898e144c70", "type": "string" },
+    { "key": "token", "value": "", "type": "string" },
+    { "key": "adminToken", "value": "", "type": "string" },
+    { "key": "orderId", "value": "", "type": "string" },
+    { "key": "orderAmount", "value": "", "type": "string" },
+    { "key": "planId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "0. Login (user) → saves token",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "const d = pm.response.json().data;",
+            "pm.collectionVariables.set('token', d.accessToken);",
+            "pm.test('got token', () => pm.expect(d.accessToken).to.be.a('string'));"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/auth/login",
+        "body": { "mode": "raw", "raw": "{\n  \"identifier\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}" }
+      }
+    },
+    {
+      "name": "1. Get Plans",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/subscription/plans"
+      }
+    },
+    {
+      "name": "2. My Subscription (before → active:false)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/subscription/me"
+      }
+    },
+    {
+      "name": "3. Create Order (premium/monthly) → saves orderId+amount",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "const d = pm.response.json().data;",
+            "pm.collectionVariables.set('orderId', d.orderId);",
+            "pm.collectionVariables.set('orderAmount', String(d.amount));",
+            "pm.collectionVariables.set('planId', d.planId);",
+            "pm.test('order created', () => pm.expect(d.orderId).to.include('order_'));",
+            "console.log('orderId', d.orderId, 'amount(paise)', d.amount, 'reused', d.reused);"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": "{{baseUrl}}/subscription/order",
+        "body": { "mode": "raw", "raw": "{\n  \"tier\": \"premium\",\n  \"billingCycle\": \"monthly\"\n}" }
+      }
+    },
+    {
+      "name": "4. Create Order AGAIN (same plan → REUSED, no 2nd charge)",
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [
+            "const d = pm.response.json().data;",
+            "pm.test('same order reused', () => pm.expect(d.orderId).to.eql(pm.collectionVariables.get('orderId')));",
+            "pm.test('reused flag', () => pm.expect(d.reused).to.be.true);"
+          ] }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": "{{baseUrl}}/subscription/order",
+        "body": { "mode": "raw", "raw": "{\n  \"tier\": \"premium\",\n  \"billingCycle\": \"monthly\"\n}" }
+      }
+    },
+    {
+      "name": "5. Create Order DIFFERENT plan while pending → 409",
+      "event": [
+        { "listen": "test", "script": { "exec": [
+          "pm.test('blocked with 409', () => pm.response.to.have.status(409));",
+          "pm.test('code PAYMENT_IN_PROGRESS', () => pm.expect(pm.response.json().code).to.eql('PAYMENT_IN_PROGRESS'));"
+        ] } }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": "{{baseUrl}}/subscription/order",
+        "body": { "mode": "raw", "raw": "{\n  \"tier\": \"elite\",\n  \"billingCycle\": \"monthly\"\n}" }
+      }
+    },
+    {
+      "name": "6. Simulate Paid Webhook (signs itself) → activates",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": { "exec": [
+            "// Build the exact event Razorpay would send, then HMAC-sign it with the",
+            "// webhook secret — so the server verifies it as genuine and activates.",
+            "const orderId = pm.collectionVariables.get('orderId');",
+            "const amount = parseInt(pm.collectionVariables.get('orderAmount'), 10);",
+            "const secret = pm.collectionVariables.get('webhookSecret');",
+            "const payId = 'pay_sim_' + Date.now();",
+            "const event = {",
+            "  event: 'order.paid',",
+            "  payload: {",
+            "    payment: { entity: { id: payId, order_id: orderId, amount: amount, currency: 'INR', status: 'captured' } },",
+            "    order: { entity: { id: orderId, amount: amount, status: 'paid' } }",
+            "  }",
+            "};",
+            "const body = JSON.stringify(event);",
+            "const sig = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);",
+            "pm.collectionVariables.set('webhookBody', body);",
+            "pm.collectionVariables.set('webhookSignature', sig);"
+          ] }
+        },
+        { "listen": "test", "script": { "exec": [
+          "pm.test('webhook accepted (200)', () => pm.response.to.have.status(200));"
+        ] } }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-razorpay-signature", "value": "{{webhookSignature}}" }
+        ],
+        "url": "{{baseUrl}}/payments/webhook",
+        "body": { "mode": "raw", "raw": "{{webhookBody}}" }
+      }
+    },
+    {
+      "name": "7. My Subscription (after → active:true, premium)",
+      "event": [
+        { "listen": "test", "script": { "exec": [
+          "const d = pm.response.json().data;",
+          "pm.test('active', () => pm.expect(d.active).to.be.true);",
+          "pm.test('tier premium', () => pm.expect(d.tier).to.eql('premium'));"
+        ] } }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/subscription/me"
+      }
+    },
+    {
+      "name": "8. Simulate SAME webhook AGAIN (idempotent → still 1 sub)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": { "exec": [
+            "const orderId = pm.collectionVariables.get('orderId');",
+            "const amount = parseInt(pm.collectionVariables.get('orderAmount'), 10);",
+            "const secret = pm.collectionVariables.get('webhookSecret');",
+            "const event = { event:'order.paid', payload:{ payment:{ entity:{ id:'pay_sim_dup', order_id:orderId, amount:amount, currency:'INR', status:'captured' } }, order:{ entity:{ id:orderId, amount:amount, status:'paid' } } } };",
+            "const body = JSON.stringify(event);",
+            "pm.collectionVariables.set('webhookBody', body);",
+            "pm.collectionVariables.set('webhookSignature', CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex));"
+          ] }
+        },
+        { "listen": "test", "script": { "exec": [ "pm.test('still 200 (no double activation)', () => pm.response.to.have.status(200));" ] } }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-razorpay-signature", "value": "{{webhookSignature}}" }
+        ],
+        "url": "{{baseUrl}}/payments/webhook",
+        "body": { "mode": "raw", "raw": "{{webhookBody}}" }
+      }
+    },
+    {
+      "name": "9. Create Order while ACTIVE → 409 ALREADY_SUBSCRIBED",
+      "event": [
+        { "listen": "test", "script": { "exec": [
+          "pm.test('blocked 409', () => pm.response.to.have.status(409));",
+          "pm.test('ALREADY_SUBSCRIBED', () => pm.expect(pm.response.json().code).to.eql('ALREADY_SUBSCRIBED'));"
+        ] } }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": "{{baseUrl}}/subscription/order",
+        "body": { "mode": "raw", "raw": "{\n  \"tier\": \"premium\",\n  \"billingCycle\": \"monthly\"\n}" }
+      }
+    },
+    {
+      "name": "10. Webhook with BAD signature → 401",
+      "event": [
+        { "listen": "test", "script": { "exec": [ "pm.test('rejected 401', () => pm.response.to.have.status(401));" ] } }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-razorpay-signature", "value": "deadbeef" }
+        ],
+        "url": "{{baseUrl}}/payments/webhook",
+        "body": { "mode": "raw", "raw": "{\"event\":\"order.paid\"}" }
+      }
+    },
+    {
+      "name": "ADMIN 0. Login (admin) → adminToken",
+      "event": [
+        { "listen": "test", "script": { "exec": [ "pm.collectionVariables.set('adminToken', pm.response.json().data.accessToken);" ] } }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/auth/login",
+        "body": { "mode": "raw", "raw": "{\n  \"identifier\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}" }
+      }
+    },
+    {
+      "name": "ADMIN 1. List all plans",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+        "url": "{{baseUrl}}/admin/plans"
+      }
+    },
+    {
+      "name": "ADMIN 2. Non-admin tries → 403 (use user token)",
+      "event": [ { "listen": "test", "script": { "exec": [ "pm.test('forbidden 403', () => pm.response.to.have.status(403));" ] } } ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": "{{baseUrl}}/admin/plans",
+        "body": { "mode": "raw", "raw": "{}" }
+      }
+    },
+    {
+      "name": "ADMIN 3. Update a plan price (amount in PAISE)",
+      "description": "Set :id in the URL to a real plan _id from 'ADMIN 1. List all plans'. amount is paise (e.g. 39900 = ₹399).",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": "{{baseUrl}}/admin/plans/PUT_PLAN_ID_HERE",
+        "body": { "mode": "raw", "raw": "{\n  \"amount\": 39900\n}" }
+      }
+    }
+  ]
+}

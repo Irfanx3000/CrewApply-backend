@@ -110,13 +110,13 @@ const JOB_ENDPOINTS = Object.freeze({
 });
 
 // ── Applications ──────────────────────────────────────────────────────────────
-// Placeholder — Phase 5
 
 const APPLICATION_ENDPOINTS = Object.freeze({
   BASE:         `${API_PREFIX}/applications`,
   BY_ID:        `${API_PREFIX}/applications/:id`,
+  ELIGIBILITY:  `${API_PREFIX}/applications/eligibility/:jobId`,
   WITHDRAW:     `${API_PREFIX}/applications/:id/withdraw`,
-  STATUS:       `${API_PREFIX}/applications/:id/status`,
+  STATUS:       `${API_PREFIX}/applications/:id/status`, // still unimplemented — admin review, out of scope for now
 });
 
 // ── Notifications ─────────────────────────────────────────────────────────────

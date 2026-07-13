@@ -122,6 +122,24 @@ const documentIdParam = [
     .isMongoId().withMessage('Invalid document ID.'),
 ];
 
+// ── POST /user/documents (generic, admin-configurable document types) ────────
+
+const uploadDocumentBody = [
+  body('category')
+    .trim()
+    .notEmpty().withMessage('category is required.'),
+  body('metadata')
+    .optional({ nullable: true, checkFalsy: true })
+    .custom((val) => {
+      try {
+        JSON.parse(val);
+        return true;
+      } catch {
+        throw new Error('metadata must be valid JSON.');
+      }
+    }),
+];
+
 module.exports = {
   updateProfile,
   updateMaritimeProfile,
@@ -131,4 +149,5 @@ module.exports = {
   medicalMetadata,
   visaMetadata,
   documentIdParam,
+  uploadDocumentBody,
 };
