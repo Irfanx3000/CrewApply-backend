@@ -8,6 +8,7 @@ const {
   JOB_EMPLOYMENT_TYPES,
   JOB_STATUSES,
 } = require('../models/job.model');
+const { PLAN_TIERS } = require('../models/plan.model');
 const DocumentType = require('../models/documentType.model');
 
 // ── Reusable helpers ──────────────────────────────────────────────────────────
@@ -22,25 +23,6 @@ const optionalDate = (field) =>
   body(field)
     .optional({ nullable: true, checkFalsy: true })
     .isISO8601().withMessage(`${field} must be a valid date (YYYY-MM-DD).`);
-
-const optionalStringArray = (field, maxItemLength = 300) => [
-  body(field)
-    .optional({ nullable: true })
-    .isArray().withMessage(`${field} must be an array.`),
-  body(`${field}.*`)
-    .optional()
-    .isString().trim().isLength({ max: maxItemLength })
-    .withMessage(`Each ${field} entry must not exceed ${maxItemLength} characters.`),
-];
-
-const ARRAY_FIELDS = [
-  'responsibilities',
-  'requirements',
-  'requiredSkills',
-  'requiredCertificates',
-  'nationalityRequirements',
-  'benefits',
-];
 
 // ── Shared field validators (used by both create and update) ─────────────────
 
@@ -76,14 +58,11 @@ const sharedFieldRules = (required) => {
     notEmpty(body('rank').trim()).isLength({ max: 100 }).withMessage('Rank must not exceed 100 characters.'),
     body('designation').optional({ nullable: true, checkFalsy: true }).isIn(JOB_DESIGNATIONS).withMessage('Invalid designation.'),
     notEmpty(body('vesselType')).isIn(JOB_VESSEL_TYPES).withMessage('Invalid vessel type.'),
-    optionalString('vesselName', 100),
 
     notEmpty(body('location.country').trim()).isLength({ max: 100 }).withMessage('Location country must not exceed 100 characters.'),
     optionalString('location.city', 100),
-    optionalString('joiningLocation', 200),
 
     notEmpty(body('employmentType')).isIn(JOB_EMPLOYMENT_TYPES).withMessage('Invalid employment type.'),
-    optionalString('contractDuration', 100),
 
     body('experience.minYears').optional({ nullable: true, checkFalsy: true }).isFloat({ min: 0, max: 60 }),
     body('experience.maxYears').optional({ nullable: true, checkFalsy: true }).isFloat({ min: 0, max: 60 }),
@@ -97,8 +76,6 @@ const sharedFieldRules = (required) => {
 
     notEmpty(body('description')).isLength({ max: 5000 }).withMessage('Description must not exceed 5000 characters.'),
 
-    ...ARRAY_FIELDS.flatMap((field) => optionalStringArray(field)),
-
     body('requiredDocuments').optional({ nullable: true }).isArray().withMessage('requiredDocuments must be an array.'),
     body('requiredDocuments.*').optional().custom(async (value) => {
       const docType = await DocumentType.findOne({ key: value, isActive: true, isRequirableForJob: true }).lean();
@@ -109,15 +86,20 @@ const sharedFieldRules = (required) => {
     optionalDate('joiningDate'),
     optionalDate('applicationDeadline'),
 
-    body('vacancies').optional({ nullable: true, checkFalsy: true }).isInt({ min: 1 }).withMessage('Vacancies must be at least 1.'),
     body('featured').optional({ nullable: true }).isBoolean(),
-    body('urgent').optional({ nullable: true }).isBoolean(),
+    body('minimumTier').optional({ nullable: true, checkFalsy: true }).isIn(PLAN_TIERS).withMessage('Invalid minimum tier.'),
   ];
 };
 
 // ── POST /admin/jobs ──────────────────────────────────────────────────────────
+// Only 'draft' or 'published' make sense as an INITIAL status — 'archived'
+// is only reachable via a transition on an existing job (PATCH /:id/status,
+// see updateStatus below).
 
-const createJob = sharedFieldRules(true);
+const createJob = [
+  ...sharedFieldRules(true),
+  body('status').optional({ nullable: true }).isIn(['draft', 'published']).withMessage('Initial status must be draft or published.'),
+];
 
 // ── PATCH /admin/jobs/:id ─────────────────────────────────────────────────────
 
@@ -171,7 +153,6 @@ const listJobsQuery = [
   query('maxSalary').optional().isFloat({ min: 0 }),
   minMaxSalaryCheck,
   query('featured').optional().isBoolean(),
-  query('urgent').optional().isBoolean(),
   query('sort').optional().isIn(['newest', 'salary']),
 ];
 

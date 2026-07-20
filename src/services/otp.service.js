@@ -30,16 +30,16 @@ const generateRawOtp = () => {
 };
 
 /**
- * Creates a new OTP for the given phone + purpose.
+ * Creates a new OTP for the given identifier + purpose.
  * Enforces the 60-second resend cooldown — throws if called too soon.
- * Deletes any previous OTP for the same phone + purpose before creating a new one.
+ * Deletes any previous OTP for the same identifier + purpose before creating a new one.
  *
- * @param {string} phone - E.164 phone number
+ * @param {string} identifier - The channel address the OTP will be sent to (e.g. email)
  * @param {string} purpose - One of OTP_PURPOSES values
  * @returns {Promise<string>} The raw (unhashed) OTP to send to the user
  */
-const createOtp = async (phone, purpose) => {
-  const existing = await Otp.findOne({ phone, purpose });
+const createOtp = async (identifier, purpose) => {
+  const existing = await Otp.findOne({ identifier, purpose });
 
   if (existing) {
     const elapsedMs = Date.now() - existing.createdAt.getTime();
@@ -61,24 +61,24 @@ const createOtp = async (phone, purpose) => {
   const otpHash = hashToken(rawOtp);
   const expiresAt = new Date(Date.now() + OTP_CONFIG.EXPIRY_MINUTES * 60 * 1000);
 
-  await Otp.create({ phone, otpHash, purpose, expiresAt });
+  await Otp.create({ identifier, otpHash, purpose, expiresAt });
 
   return rawOtp;
 };
 
 /**
- * Verifies a raw OTP against the stored hash for a given phone + purpose.
+ * Verifies a raw OTP against the stored hash for a given identifier + purpose.
  * Increments attempt counter before comparing to prevent race-condition enumeration.
  * Deletes the OTP document on success (one-time use) or when max attempts is reached.
  *
- * @param {string} phone - E.164 phone number
+ * @param {string} identifier - The channel address the OTP was sent to (e.g. email)
  * @param {string} rawOtp - The 6-digit code entered by the user
  * @param {string} purpose - One of OTP_PURPOSES values
  * @returns {Promise<true>}
  * @throws {AppError} on invalid, expired, or exhausted OTP
  */
-const verifyOtp = async (phone, rawOtp, purpose) => {
-  const otpDoc = await Otp.findOne({ phone, purpose }).select('+otpHash');
+const verifyOtp = async (identifier, rawOtp, purpose) => {
+  const otpDoc = await Otp.findOne({ identifier, purpose }).select('+otpHash');
 
   if (!otpDoc) {
     throw new AppError(AUTH_MESSAGES.OTP_NOT_FOUND, HTTP_STATUS.BAD_REQUEST, 'OTP_NOT_FOUND');
@@ -122,14 +122,14 @@ const verifyOtp = async (phone, rawOtp, purpose) => {
 };
 
 /**
- * Removes any existing OTP for a phone + purpose (clears the resend cooldown).
+ * Removes any existing OTP for an identifier + purpose (clears the resend cooldown).
  * Used when a user deliberately re-registers, so a fresh code can be issued.
  *
- * @param {string} phone - E.164 phone number
+ * @param {string} identifier - The channel address the OTP was sent to (e.g. email)
  * @param {string} purpose - One of OTP_PURPOSES values
  */
-const clearOtp = async (phone, purpose) => {
-  await Otp.deleteMany({ phone, purpose });
+const clearOtp = async (identifier, purpose) => {
+  await Otp.deleteMany({ identifier, purpose });
 };
 
 module.exports = { createOtp, verifyOtp, clearOtp };

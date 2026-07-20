@@ -25,11 +25,21 @@ const planSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     subtitle: { type: String, trim: true, default: '' },
 
-    // MONEY — stored in the smallest currency unit (paise) as an integer to avoid
-    // floating-point errors. e.g. 34900 = ₹349.00. This is the server's source of truth.
-    amount: { type: Number, required: true, min: 0 }, // renewal / standard price
-    launchAmount: { type: Number, default: null, min: 0 }, // first-time promo price (optional)
-    currency: { type: String, default: 'INR', uppercase: true, trim: true },
+    // MONEY — stored in the smallest currency unit as an integer to avoid
+    // floating-point errors (e.g. 34900 = ₹349.00 or $349.00). This is the server's
+    // source of truth. Two region buckets, currency implied by the bucket (never
+    // stored separately, so it can never drift out of sync with its region) — see
+    // src/utils/pricingRegion.util.js for CURRENCY_BY_REGION / resolveRegion.
+    pricing: {
+      india: {
+        amount: { type: Number, required: true, min: 0 }, // paise
+        launchAmount: { type: Number, default: null, min: 0 }, // first-time promo price (optional)
+      },
+      global: {
+        amount: { type: Number, required: true, min: 0 }, // cents
+        launchAmount: { type: Number, default: null, min: 0 },
+      },
+    },
 
     // Access duration granted per successful payment.
     intervalDays: { type: Number, required: true, min: 1 },
@@ -52,6 +62,16 @@ const planSchema = new mongoose.Schema(
 planSchema.index({ tier: 1, billingCycle: 1 }, { unique: true });
 planSchema.index({ isActive: 1, displayOrder: 1 });
 
+// Tier ranking for "at least this tier" checks (gating job-tier access and
+// route-level minimum-tier requirements). Missing/unknown requiredTier
+// defaults to the lowest tier ('start') — a job with no tier set should be
+// applicable by anyone with an active subscription, not accidentally locked.
+const TIER_RANK = { start: 1, premium: 2, elite: 3 };
+const isTierSufficient = (userTier, requiredTier) =>
+  (TIER_RANK[userTier] || 0) >= (TIER_RANK[requiredTier] || TIER_RANK.start);
+
 module.exports = mongoose.model('Plan', planSchema);
 module.exports.PLAN_TIERS = PLAN_TIERS;
 module.exports.BILLING_CYCLES = BILLING_CYCLES;
+module.exports.TIER_RANK = TIER_RANK;
+module.exports.isTierSufficient = isTierSufficient;

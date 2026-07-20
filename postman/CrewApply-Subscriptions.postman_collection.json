@@ -15,7 +15,10 @@
     { "key": "adminToken", "value": "", "type": "string" },
     { "key": "orderId", "value": "", "type": "string" },
     { "key": "orderAmount", "value": "", "type": "string" },
-    { "key": "planId", "value": "", "type": "string" }
+    { "key": "planId", "value": "", "type": "string" },
+    { "key": "globalEmail", "value": "", "type": "string", "description": "A test account whose User.country is NOT 'India' (e.g. 'United States') — used to verify Global/USD pricing selection." },
+    { "key": "globalPassword", "value": "", "type": "string" },
+    { "key": "globalToken", "value": "", "type": "string" }
   ],
   "item": [
     {
@@ -38,10 +41,47 @@
       }
     },
     {
-      "name": "1. Get Plans",
+      "name": "1. Get Plans → INDIA user, expect currency:INR",
+      "event": [
+        { "listen": "test", "script": { "exec": [
+          "const d = pm.response.json().data;",
+          "pm.test('India user gets INR pricing', () => pm.expect(d.monthly[0].currency).to.eql('INR'));",
+          "console.log('yearlyDiscountPercent', d.yearlyDiscountPercent);"
+        ] } }
+      ],
       "request": {
         "method": "GET",
         "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/subscription/plans"
+      }
+    },
+    {
+      "name": "1b. Login (global user) → saves globalToken",
+      "description": "Requires a test account (set via the globalEmail/globalPassword collection variables) whose User.country is NOT 'India'.",
+      "event": [
+        { "listen": "test", "script": { "exec": [
+          "pm.collectionVariables.set('globalToken', pm.response.json().data.accessToken);"
+        ] } }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/auth/login",
+        "body": { "mode": "raw", "raw": "{\n  \"identifier\": \"{{globalEmail}}\",\n  \"password\": \"{{globalPassword}}\"\n}" }
+      }
+    },
+    {
+      "name": "1c. Get Plans → GLOBAL user, expect currency:USD",
+      "event": [
+        { "listen": "test", "script": { "exec": [
+          "const d = pm.response.json().data;",
+          "pm.test('Global user gets USD pricing', () => pm.expect(d.monthly[0].currency).to.eql('USD'));",
+          "console.log('yearlyDiscountPercent', d.yearlyDiscountPercent);"
+        ] } }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{globalToken}}" }],
         "url": "{{baseUrl}}/subscription/plans"
       }
     },
@@ -266,8 +306,8 @@
       }
     },
     {
-      "name": "ADMIN 3. Update a plan price (amount in PAISE)",
-      "description": "Set :id in the URL to a real plan _id from 'ADMIN 1. List all plans'. amount is paise (e.g. 39900 = ₹399).",
+      "name": "ADMIN 3. Update a single plan doc's pricing",
+      "description": "Set :id in the URL to a real plan _id from 'ADMIN 1. List all plans'. india.amount is paise (e.g. 39900 = ₹399); global.amount is cents (e.g. 499 = $4.99).",
       "request": {
         "method": "PATCH",
         "header": [
@@ -275,7 +315,41 @@
           { "key": "Content-Type", "value": "application/json" }
         ],
         "url": "{{baseUrl}}/admin/plans/PUT_PLAN_ID_HERE",
-        "body": { "mode": "raw", "raw": "{\n  \"amount\": 39900\n}" }
+        "body": { "mode": "raw", "raw": "{\n  \"pricing\": {\n    \"india\": { \"amount\": 39900, \"launchAmount\": 29900 },\n    \"global\": { \"amount\": 499, \"launchAmount\": 399 }\n  }\n}" }
+      }
+    },
+    {
+      "name": "ADMIN 4. Update tier pricing (monthly + yearly together)",
+      "description": "Updates BOTH the (tier,'monthly') and (tier,'yearly') Plan docs in one call — this is what the admin panel's Edit modal actually calls.",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": "{{baseUrl}}/admin/plans/tier/premium",
+        "body": { "mode": "raw", "raw": "{\n  \"monthly\": {\n    \"pricing\": {\n      \"india\": { \"amount\": 34900, \"launchAmount\": 24900 },\n      \"global\": { \"amount\": 499, \"launchAmount\": 299 }\n    }\n  },\n  \"yearly\": {\n    \"pricing\": {\n      \"india\": { \"amount\": 335000, \"launchAmount\": 335000 },\n      \"global\": { \"amount\": 3999, \"launchAmount\": 3999 }\n    }\n  }\n}" }
+      }
+    },
+    {
+      "name": "ADMIN 5. Get pricing settings (yearly discount override)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+        "url": "{{baseUrl}}/admin/plans/pricing-settings"
+      }
+    },
+    {
+      "name": "ADMIN 6. Set yearly discount override → 25, then clear (null)",
+      "description": "Run once with the body below to set an override, then edit the body to {\"yearlyDiscountOverridePercent\": null} and run again to revert to the auto-computed value.",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": "{{baseUrl}}/admin/plans/pricing-settings",
+        "body": { "mode": "raw", "raw": "{\n  \"yearlyDiscountOverridePercent\": 25\n}" }
       }
     }
   ]

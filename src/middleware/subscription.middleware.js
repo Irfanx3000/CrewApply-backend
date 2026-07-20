@@ -3,9 +3,7 @@
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
-
-// Tier ranking for "at least this tier" checks.
-const TIER_RANK = { start: 1, premium: 2, elite: 3 };
+const { isTierSufficient } = require('../models/plan.model');
 
 // True if req.user's cached entitlement is active and unexpired. Zero extra query
 // — authenticate already loaded req.user with subscription* fields.
@@ -35,9 +33,7 @@ const requireTier = (minTier) => (req, res, next) => {
       new AppError(AUTH_MESSAGES.SUBSCRIPTION_REQUIRED, HTTP_STATUS.PAYMENT_REQUIRED, 'SUBSCRIPTION_REQUIRED')
     );
   }
-  const have = TIER_RANK[req.user.subscriptionTier] || 0;
-  const need = TIER_RANK[minTier] || 0;
-  if (have < need) {
+  if (!isTierSufficient(req.user.subscriptionTier, minTier)) {
     return next(
       new AppError(AUTH_MESSAGES.SUBSCRIPTION_TIER_REQUIRED, HTTP_STATUS.PAYMENT_REQUIRED, 'TIER_REQUIRED')
     );

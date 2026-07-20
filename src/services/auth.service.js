@@ -10,11 +10,11 @@ const { OTP_PURPOSES } = require('../constants/otp');
 const { generateTokenPair, hashToken } = require('../utils/crypto.util');
 const { validateStrength, assertPasswordChanged } = require('./password.service');
 const { signAccessToken, createRefreshToken, rotateRefreshToken, validateRefreshToken, revokeRefreshToken, revokeAllRefreshTokens } = require('./token.service');
-const { sendVerificationEmail, sendPasswordResetEmail } = require('./email.service');
+const { sendVerificationEmail, sendPasswordResetEmail, sendOtpEmail } = require('./email.service');
 const { verifyGoogleIdToken } = require('./oAuth.service');
 const { createOtp, verifyOtp, clearOtp } = require('./otp.service');
-const { sendOtpSms } = require('./sms.service');
 const auditService = require('./audit.service');
+const referralService = require('./referral.service');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -70,7 +70,7 @@ const isAtLeast18 = (dob) => {
  * Does NOT return tokens — the account activates after OTP verification.
  */
 const register = async (body, req) => {
-  const { name, dateOfBirth, gender, nationality, country, state, city, phone, email, password } = body;
+  const { name, dateOfBirth, gender, nationality, country, state, city, phone, email, password, referralCode } = body;
 
   validateStrength(password);
 
@@ -93,7 +93,7 @@ const register = async (body, req) => {
   // or phone. This lets a user go back through onboarding, change details, and
   // resubmit without hitting a duplicate error on a half-finished registration.
   const verifiedConflict = await User.findOne({
-    phoneVerified: true,
+    emailVerified: true,
     $or: [{ email }, { phone: normalizedPhone }],
   });
   if (verifiedConflict) {
@@ -106,12 +106,26 @@ const register = async (body, req) => {
   // Remove any prior UNVERIFIED registration for this email or phone so a repeat
   // submission (edited or not) starts clean and just re-sends a fresh OTP.
   await User.deleteMany({
-    phoneVerified: false,
+    emailVerified: false,
     $or: [{ email }, { phone: normalizedPhone }],
   });
   // Clear the prior OTP so this deliberate re-registration isn't blocked by the
   // 60s resend cooldown (the cooldown still applies to the Resend OTP button).
-  await clearOtp(normalizedPhone, OTP_PURPOSES.MOBILE_VERIFICATION);
+  await clearOtp(email, OTP_PURPOSES.MOBILE_VERIFICATION);
+
+  // Resolve an optional referral code up front — invalid/unknown codes
+  // soft-fail (a typo shouldn't block signup) rather than throwing; the
+  // caller is told via `referralApplied` so the UI can warn/offer a retry.
+  // The actual Referral row is only created once this account is
+  // phone-verified (see verifyMobile()), so a resubmit-before-verify never
+  // orphans a row.
+  //
+  // A user's OWN referralCode is deliberately NOT generated here — it's only
+  // created on demand (see referral.service.js's generateCode(), wired to
+  // POST /user/referral/generate) so the mobile Refer & Earn screen can offer
+  // an explicit "Generate Code" action instead of showing one pre-filled.
+  const referrer = referralCode ? await referralService.resolveReferrer(referralCode, { email, phone: normalizedPhone }) : null;
+  const referralApplied = referralCode ? !!referrer : null;
 
   const user = await User.create({
     name,
@@ -125,13 +139,14 @@ const register = async (body, req) => {
     state,
     city,
     isActive: false,
-    phoneVerified: false,
+    emailVerified: false,
+    referredBy: referrer ? referrer._id : null,
   });
 
   // Generate OTP and send — non-blocking failure does NOT abort registration.
-  const rawOtp = await createOtp(normalizedPhone, OTP_PURPOSES.MOBILE_VERIFICATION);
-  sendOtpSms({ to: normalizedPhone, otp: rawOtp, purpose: OTP_PURPOSES.MOBILE_VERIFICATION }).catch((err) => {
-    console.error('AuthService.register: SMS send failed:', err.message);
+  const rawOtp = await createOtp(email, OTP_PURPOSES.MOBILE_VERIFICATION);
+  sendOtpEmail({ to: email, name: user.name, otp: rawOtp }).catch((err) => {
+    console.error('AuthService.register: OTP email send failed:', err.message);
   });
 
   const context = extractContext(req);
@@ -141,10 +156,10 @@ const register = async (body, req) => {
     event: AUDIT_EVENTS.MOBILE_OTP_SENT,
     userId: user._id,
     ...context,
-    metadata: { phone: normalizedPhone },
+    metadata: { email },
   }).catch(() => {});
 
-  return { id: user._id, name: user.name, email: user.email, phone: normalizedPhone };
+  return { id: user._id, name: user.name, email: user.email, phone: normalizedPhone, referralApplied };
 };
 
 // ── Send / Resend OTP ─────────────────────────────────────────────────────────
@@ -153,22 +168,20 @@ const register = async (body, req) => {
  * Resends a mobile OTP to an unverified account.
  * Enforces the 60-second resend cooldown (handled by otp.service).
  */
-const sendOtp = async (phone, req) => {
-  const normalizedPhone = normalizePhone(phone);
-
-  const user = await User.findOne({ phone: normalizedPhone });
+const sendOtp = async (email, req) => {
+  const user = await User.findOne({ email });
 
   if (!user) {
     throw new AppError(AUTH_MESSAGES.NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'USER_NOT_FOUND');
   }
 
-  if (user.phoneVerified) {
-    throw new AppError('This phone number is already verified.', HTTP_STATUS.BAD_REQUEST, 'ALREADY_VERIFIED');
+  if (user.emailVerified) {
+    throw new AppError('This account is already verified.', HTTP_STATUS.BAD_REQUEST, 'ALREADY_VERIFIED');
   }
 
-  const rawOtp = await createOtp(normalizedPhone, OTP_PURPOSES.MOBILE_VERIFICATION);
-  sendOtpSms({ to: normalizedPhone, otp: rawOtp, purpose: OTP_PURPOSES.MOBILE_VERIFICATION }).catch((err) => {
-    console.error('AuthService.sendOtp: SMS send failed:', err.message);
+  const rawOtp = await createOtp(email, OTP_PURPOSES.MOBILE_VERIFICATION);
+  sendOtpEmail({ to: email, name: user.name, otp: rawOtp }).catch((err) => {
+    console.error('AuthService.sendOtp: OTP email send failed:', err.message);
   });
 
   const context = extractContext(req);
@@ -176,45 +189,44 @@ const sendOtp = async (phone, req) => {
     event: AUDIT_EVENTS.MOBILE_OTP_SENT,
     userId: user._id,
     ...context,
-    metadata: { phone: normalizedPhone },
+    metadata: { email },
   });
 
-  return { phone: normalizedPhone };
+  return { email };
 };
 
 // ── Verify Mobile OTP ─────────────────────────────────────────────────────────
 
 /**
- * Verifies the 6-digit mobile OTP.
+ * Verifies the 6-digit OTP sent to the user's email.
  * On success: activates the account and issues access + refresh tokens.
  */
-const verifyMobile = async ({ phone, otp }, req) => {
-  const normalizedPhone = normalizePhone(phone);
+const verifyMobile = async ({ email, otp }, req) => {
   const context = extractContext(req);
 
-  const user = await User.findOne({ phone: normalizedPhone });
+  const user = await User.findOne({ email });
 
   if (!user) {
     throw new AppError(AUTH_MESSAGES.NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'USER_NOT_FOUND');
   }
 
-  if (user.phoneVerified) {
-    throw new AppError('Phone number is already verified.', HTTP_STATUS.BAD_REQUEST, 'ALREADY_VERIFIED');
+  if (user.emailVerified) {
+    throw new AppError('Account is already verified.', HTTP_STATUS.BAD_REQUEST, 'ALREADY_VERIFIED');
   }
 
   try {
-    await verifyOtp(normalizedPhone, otp, OTP_PURPOSES.MOBILE_VERIFICATION);
+    await verifyOtp(email, otp, OTP_PURPOSES.MOBILE_VERIFICATION);
   } catch (err) {
     await auditService.log({
       event: AUDIT_EVENTS.MOBILE_OTP_FAILED,
       userId: user._id,
       ...context,
-      metadata: { phone: normalizedPhone, code: err.code },
+      metadata: { email, code: err.code },
     });
     throw err;
   }
 
-  user.phoneVerified = true;
+  user.emailVerified = true;
   user.isActive = true;
   await user.save({ validateBeforeSave: false });
 
@@ -222,6 +234,14 @@ const verifyMobile = async ({ phone, otp }, req) => {
   const refreshToken = await createRefreshToken(user._id, context);
 
   auditService.log({ event: AUDIT_EVENTS.MOBILE_OTP_VERIFIED, userId: user._id, ...context }).catch(() => {});
+
+  // Referral row is only created now (not at register()) so a resubmit
+  // before verification never orphans a row for a deleted-and-recreated user.
+  if (user.referredBy) {
+    referralService.attribute(user, req).catch((err) => {
+      console.error('AuthService.verifyMobile: referral attribution failed (non-fatal):', err.message);
+    });
+  }
 
   return {
     accessToken,

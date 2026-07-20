@@ -5,9 +5,12 @@ const { OTP_PURPOSES } = require('../constants/otp');
 
 const otpSchema = new mongoose.Schema(
   {
-    phone: {
+    // Whatever channel the OTP was sent to for a given purpose — an email
+    // address today (MOBILE_VERIFICATION now delivers via email), but kept
+    // generic since a purpose could target a different channel later.
+    identifier: {
       type: String,
-      required: [true, 'Phone number is required.'],
+      required: [true, 'Identifier is required.'],
       trim: true,
     },
 
@@ -48,7 +51,7 @@ const otpSchema = new mongoose.Schema(
 // Auto-expire: MongoDB removes the document when expiresAt is reached
 otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
-// Fast lookup by phone + purpose (one active OTP per phone per purpose)
-otpSchema.index({ phone: 1, purpose: 1 });
+// Fast lookup by identifier + purpose (one active OTP per identifier per purpose)
+otpSchema.index({ identifier: 1, purpose: 1 });
 
 module.exports = mongoose.model('Otp', otpSchema);

@@ -47,4 +47,28 @@ const deactivate = async (id, adminId, req) => {
   return plan;
 };
 
-module.exports = { listAll, create, update, deactivate };
+// Updates the (tier, 'monthly') and (tier, 'yearly') Plan docs together in one
+// call, so the admin UI (one row per tier) never has to juggle two Mongo _ids.
+// body: { monthly?: {...fields}, yearly?: {...fields} } — either half is optional.
+const updateTierPricing = async (tier, body, adminId, req) => {
+  const results = {};
+  for (const cycle of ['monthly', 'yearly']) {
+    if (!body[cycle]) continue;
+    const plan = await Plan.findOneAndUpdate(
+      { tier, billingCycle: cycle },
+      { $set: body[cycle] },
+      { new: true, runValidators: true }
+    );
+    if (!plan) {
+      throw new AppError(AUTH_MESSAGES.PLAN_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'PLAN_NOT_FOUND');
+    }
+    results[cycle] = plan;
+  }
+
+  auditService
+    .log({ event: AUDIT_EVENTS.PLAN_UPDATED, userId: adminId, ...ctxOf(req), metadata: { tier, changes: body } })
+    .catch(() => {});
+  return results;
+};
+
+module.exports = { listAll, create, update, deactivate, updateTierPricing };

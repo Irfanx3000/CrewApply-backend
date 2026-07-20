@@ -1,6 +1,8 @@
 'use strict';
 
 const jobService = require('../services/job.service');
+const applicationService = require('../services/application.service');
+const savedJobService = require('../services/savedJob.service');
 const auditService = require('../services/audit.service');
 const asyncHandler = require('../utils/asyncHandler');
 const { successResponse, paginationMeta } = require('../utils/apiResponse');
@@ -43,6 +45,17 @@ const createJob = asyncHandler(async (req, res) => {
   return successResponse(res, AUTH_MESSAGES.JOB_CREATED, { job }, HTTP_STATUS.CREATED);
 });
 
+const getJobStats = asyncHandler(async (req, res) => {
+  const job = await jobService.getAdminJobById(req.params.id);
+  if (!job) {
+    throw new AppError(AUTH_MESSAGES.JOB_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'NOT_FOUND');
+  }
+
+  const stats = await applicationService.getJobApplicationStats(req.params.id);
+
+  return successResponse(res, AUTH_MESSAGES.JOB_STATS_FETCHED, { stats });
+});
+
 const updateJob = asyncHandler(async (req, res) => {
   const job = await jobService.updateJob(req.params.id, req.body, req.user._id);
 
@@ -64,6 +77,12 @@ const updateStatus = asyncHandler(async (req, res) => {
     metadata: { jobId: job._id, status: job.status },
   });
 
+  // Moving out of 'published' means anyone who saved this job can no longer
+  // apply to it — unsave it for them and let them know why it's gone.
+  if (job.status !== 'published') {
+    savedJobService.notifyAndRemoveUnavailableJob(job).catch(() => {});
+  }
+
   return successResponse(res, AUTH_MESSAGES.JOB_STATUS_UPDATED, { job });
 });
 
@@ -76,12 +95,19 @@ const deleteJob = asyncHandler(async (req, res) => {
     metadata: { jobId: job._id },
   });
 
+  // Only draft jobs can reach this point (enforced in jobService.deleteJob),
+  // and drafts are never visible/saveable by users — this is a no-op in
+  // practice, kept only so saved-jobs cleanup stays symmetric if that
+  // business rule ever changes.
+  savedJobService.notifyAndRemoveUnavailableJob(job).catch(() => {});
+
   return successResponse(res, AUTH_MESSAGES.JOB_DELETED, { job });
 });
 
 module.exports = {
   listAdminJobs,
   getAdminJobById,
+  getJobStats,
   createJob,
   updateJob,
   updateStatus,

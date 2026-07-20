@@ -11,6 +11,7 @@ const { ROLES } = require('../constants/roles');
 
 const userController = require('../controllers/user.controller');
 const documentController = require('../controllers/document.controller');
+const referralController = require('../controllers/referral.controller');
 const userValidation = require('../validations/user.validation');
 
 const {
@@ -70,6 +71,11 @@ router.get('/documents/:id/view-token', authenticate, validate(userValidation.do
 // Deliberately NOT `authenticate` — see documentViewToken.middleware.js for why.
 router.get('/documents/:id/file', requireDocumentViewToken, validate(userValidation.documentIdParam),     documentController.getDocumentFile);
 router.delete('/documents/:id', authenticate, validate(userValidation.documentIdParam),                   documentController.deleteDocument);
+
+// ── Referrals & wallet ────────────────────────────────────────────────────────
+
+router.get('/referral', authenticate, referralController.getMyReferral);
+router.post('/referral/generate', authenticate, referralController.generateReferralCode);
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
 

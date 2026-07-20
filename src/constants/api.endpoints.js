@@ -82,11 +82,14 @@ const USER_ENDPOINTS = Object.freeze({
 // Placeholder — Phase 9
 
 const ADMIN_ENDPOINTS = Object.freeze({
-  BASE:       `${API_PREFIX}/admin`,
-  DASHBOARD:  `${API_PREFIX}/admin/dashboard`,
-  USERS:      `${API_PREFIX}/admin/users`,
-  USER_BY_ID: `${API_PREFIX}/admin/users/:id`,
-  JOBS:       `${API_PREFIX}/admin/jobs`,
+  BASE:               `${API_PREFIX}/admin`,
+  DASHBOARD:          `${API_PREFIX}/admin/dashboard`,
+  USERS:              `${API_PREFIX}/admin/users`,
+  USER_BY_ID:         `${API_PREFIX}/admin/users/:id`,
+  JOBS:               `${API_PREFIX}/admin/jobs`,
+  APPLICATIONS:       `${API_PREFIX}/admin/applications`,
+  APPLICATION_BY_ID:  `${API_PREFIX}/admin/applications/:id`,
+  APPLICATION_STATUS: `${API_PREFIX}/admin/applications/:id/status`,
 });
 
 // ── Companies ─────────────────────────────────────────────────────────────────

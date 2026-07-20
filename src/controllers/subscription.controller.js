@@ -6,9 +6,10 @@ const subscriptionService = require('../services/subscription.service');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
 
-// GET /subscription/plans — public catalogue (auth required)
+// GET /subscription/plans — public catalogue (auth required). Pricing is
+// resolved for the requesting user's own region (India/INR vs Global/USD).
 const getPlans = asyncHandler(async (req, res) => {
-  const data = await subscriptionService.getActivePlans();
+  const data = await subscriptionService.getActivePlans(req.user);
   return successResponse(res, AUTH_MESSAGES.PLANS_FETCHED, data);
 });
 
@@ -31,7 +32,7 @@ const verify = asyncHandler(async (req, res) => {
 
 // GET /subscription/me — current subscription (with lazy expiry)
 const me = asyncHandler(async (req, res) => {
-  const data = await subscriptionService.getMySubscription(req.user._id);
+  const data = await subscriptionService.getMySubscription(req.user);
   return successResponse(res, AUTH_MESSAGES.SUBSCRIPTION_FETCHED, data);
 });
 

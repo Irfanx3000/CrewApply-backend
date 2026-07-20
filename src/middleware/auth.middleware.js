@@ -36,8 +36,15 @@ const authenticate = asyncHandler(async (req, res, next) => {
     throw new AppError(AUTH_MESSAGES.UNAUTHORIZED, HTTP_STATUS.UNAUTHORIZED, 'UNAUTHORIZED');
   }
 
+  // Checked separately (not a single OR) so the client can tell blocked and
+  // deleted apart and word the mid-session sign-out message accordingly.
+  // Deleted first: setStatus('deleted') also sets isActive false, so deleted
+  // must win over the generic blocked fallback.
+  if (user.isDeleted) {
+    throw new AppError(AUTH_MESSAGES.ACCOUNT_DELETED, HTTP_STATUS.FORBIDDEN, 'ACCOUNT_DELETED');
+  }
   if (!user.isActive) {
-    throw new AppError(AUTH_MESSAGES.ACCOUNT_INACTIVE, HTTP_STATUS.FORBIDDEN, 'ACCOUNT_INACTIVE');
+    throw new AppError(AUTH_MESSAGES.ACCOUNT_BLOCKED, HTTP_STATUS.FORBIDDEN, 'ACCOUNT_BLOCKED');
   }
 
   req.user = user;

@@ -4,6 +4,9 @@ const nodemailer = require('nodemailer');
 const { config } = require('../config');
 const verificationEmail = require('../emails/templates/verificationEmail');
 const resetPasswordEmail = require('../emails/templates/resetPasswordEmail');
+const applicationStatusEmail = require('../emails/templates/applicationStatusEmail');
+const otpEmail = require('../emails/templates/otpEmail');
+const { STATUS_NOTIFICATION_COPY } = require('../constants/applicationStatusCopy');
 
 let _transporter = null;
 
@@ -95,4 +98,35 @@ const sendPasswordResetEmail = async ({ to, name, token }) => {
   });
 };
 
-module.exports = { sendVerificationEmail, sendPasswordResetEmail };
+/**
+ * Sends the applicant-facing email for an application status change.
+ * No-op (returns without sending) for any status without copy — mirrors the
+ * same guard already used for the in-app notification.
+ *
+ * @param {{ to: string, name: string, jobTitle: string, status: string }} params
+ */
+const sendApplicationStatusEmail = async ({ to, name, jobTitle, status }) => {
+  const copy = STATUS_NOTIFICATION_COPY[status];
+  if (!copy) return;
+
+  await sendEmail({
+    to,
+    subject: `${copy.title} — CrewApply`,
+    html: applicationStatusEmail({ name, title: copy.title, message: copy.body(jobTitle) }),
+  });
+};
+
+/**
+ * Sends a 6-digit OTP verification code by email (registration/account verification).
+ *
+ * @param {{ to: string, name: string, otp: string }} params
+ */
+const sendOtpEmail = async ({ to, name, otp }) => {
+  await sendEmail({
+    to,
+    subject: 'Your verification code — CrewApply',
+    html: otpEmail({ name, otp }),
+  });
+};
+
+module.exports = { sendVerificationEmail, sendPasswordResetEmail, sendApplicationStatusEmail, sendOtpEmail };

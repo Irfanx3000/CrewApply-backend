@@ -87,6 +87,14 @@ const register = [
   phoneField(),
   emailField(),
   passwordField(),
+
+  // Deliberately lenient — an invalid/mistyped code should silently fail to
+  // match anyone in referralService.resolveReferrer() rather than blocking
+  // registration outright with a validation error over a typo.
+  body('referralCode')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 20 }).withMessage('Referral code is too long.'),
 ];
 
 /**
@@ -105,18 +113,18 @@ const resendVerification = [
 
 /**
  * POST /auth/send-otp
- * Resend OTP to a phone number (for unverified accounts).
+ * Resend OTP to the account's email (for unverified accounts).
  */
 const sendOtp = [
-  phoneField(),
+  emailField(),
 ];
 
 /**
  * POST /auth/verify-mobile
- * Verify the 6-digit OTP and activate the account.
+ * Verify the 6-digit email OTP and activate the account.
  */
 const verifyMobile = [
-  phoneField(),
+  emailField(),
   body('otp')
     .notEmpty().withMessage('OTP is required.')
     .isLength({ min: 6, max: 6 }).withMessage('OTP must be exactly 6 digits.')

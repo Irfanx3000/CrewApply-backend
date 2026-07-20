@@ -50,6 +50,14 @@ const config = {
     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
   },
 
+  // Firebase Admin (push notifications). Service-account JSON is stored as a
+  // base64-encoded env var (avoids committing a JSON file / multiline env
+  // escaping issues). NOT in validateEnv's required[] — the app boots without
+  // it; push sends become silent no-ops until configured (see push.service.js).
+  firebase: {
+    serviceAccountBase64: process.env.FIREBASE_SERVICE_ACCOUNT_BASE64,
+  },
+
   security: {
     // 10 rounds (~60ms) is a secure, OWASP-accepted default and ~4x faster than
     // 12 (~260ms) — the dominant cost of register/login. Override via env if needed.
@@ -84,9 +92,12 @@ const config = {
       windowMs: 15 * 60 * 1000,
       max: 20,
     },
+    // Shared across nearly every route (see app.js) — sized for a real
+    // multi-screen app with background polling (e.g. the subscription
+    // screen's price-refresh polling), not just a handful of manual requests.
     general: {
       windowMs: 15 * 60 * 1000,
-      max: 100,
+      max: 300,
     },
   },
 

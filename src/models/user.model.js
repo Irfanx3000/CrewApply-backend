@@ -226,10 +226,83 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
+    // ── Referrals & wallet ───────────────────────────────────────────────────────
+    // referralCode: this user's own shareable code (many friends can use it).
+    // referredBy: set ONCE at registration, never overwritten — who referred
+    // THIS account. walletBalance is denormalized from WalletTransaction the
+    // same way subscriptionTier is denormalized from Subscription above: the
+    // transaction collection is the source of truth, this is a fast-read cache.
+    //
+    // No `default` here, deliberately — a sparse unique index only skips
+    // documents where the field is ABSENT, not documents where it's explicitly
+    // null. Since most users never generate a code (it's an on-demand action,
+    // see referral.service.js's generateCode()), a `default: null` would put
+    // an explicit null on every such document and the second one ever created
+    // would collide on this unique index.
+    referralCode: {
+      type: String,
+      unique: true,
+      sparse: true,
+      uppercase: true,
+      index: true,
+    },
+    referredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
+    walletBalance: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     // ── Account status ─────────────────────────────────────────────────────────
     isActive: {
       type: Boolean,
       default: true,
+    },
+
+    // Soft-delete (admin panel "Delete User") — reversible via restore, unlike
+    // a real Mongo delete. Kept distinct from isActive so "blocked" (reversible
+    // suspension, still listed) and "deleted" (hidden from the default list)
+    // read as separate admin actions even though both currently block login.
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
+
+    // ── Saved jobs ──────────────────────────────────────────────────────────────
+    // Bookmarked jobs, populated on read. select: false — never needed in
+    // profile responses, only via the dedicated saved-jobs endpoints.
+    savedJobs: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Job' }],
+      default: [],
+      select: false,
+    },
+
+    // ── Push notifications ─────────────────────────────────────────────────────
+    // Array (not a single field) — a user may be logged in on multiple devices.
+    // Internal plumbing, never needed in profile responses.
+    deviceTokens: {
+      type: [
+        new mongoose.Schema(
+          {
+            token: { type: String, required: true },
+            platform: { type: String, enum: ['ios', 'android'], required: true },
+            createdAt: { type: Date, default: Date.now },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
+      select: false,
     },
   },
   {

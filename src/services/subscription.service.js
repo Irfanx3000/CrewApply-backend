@@ -7,11 +7,17 @@ const Subscription = require('../models/subscription.model');
 const User = require('../models/user.model');
 const razorpayService = require('./razorpay.service');
 const auditService = require('./audit.service');
+const notificationService = require('./notification.service');
+const pricingSettingService = require('./pricingSetting.service');
+const { getApplicationUsage } = require('./application.service');
+const referralService = require('./referral.service');
+const walletService = require('./wallet.service');
 const AppError = require('../utils/AppError');
 const { config } = require('../config');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
 const { AUDIT_EVENTS } = require('../constants/audit');
+const { CURRENCY_BY_REGION, resolveRegion } = require('../utils/pricingRegion.util');
 
 // An open ('created') order older than this is treated as abandoned and released,
 // so a user who bailed out of an earlier checkout isn't locked out forever.
@@ -32,45 +38,77 @@ const audit = (event, userId, req, metadata = {}) =>
 
 // ── Public plan catalogue ─────────────────────────────────────────────────────
 
-const toClientPlan = (p) => ({
-  id: p.code,
-  tier: p.tier,
-  billingCycle: p.billingCycle,
-  name: p.name,
-  subtitle: p.subtitle,
-  amount: p.amount, // paise
-  launchAmount: p.launchAmount,
-  currency: p.currency,
-  intervalDays: p.intervalDays,
-  features: p.features,
-  jobApplicationLimit: p.jobApplicationLimit,
-});
+const toClientPlan = (p, region) => {
+  const pricing = p.pricing[region];
+  return {
+    id: p.code,
+    tier: p.tier,
+    billingCycle: p.billingCycle,
+    name: p.name,
+    subtitle: p.subtitle,
+    amount: pricing.amount, // smallest currency unit (paise for INR, cents for USD)
+    launchAmount: pricing.launchAmount,
+    currency: CURRENCY_BY_REGION[region],
+    intervalDays: p.intervalDays,
+    features: p.features,
+    jobApplicationLimit: p.jobApplicationLimit,
+  };
+};
 
-const getActivePlans = async () => {
-  const plans = await Plan.find({ isActive: true }).sort({ displayOrder: 1, amount: 1 }).lean();
+// Max "yearly vs monthly x12" savings across active tiers, for the region's own
+// pricing — matches the "Save up to X%" marketing framing. Returns null if there
+// isn't at least one tier with both cycles active (nothing sensible to show).
+const computeMaxYearlySavingsPercent = (plans, region) => {
+  const byTier = {};
+  for (const p of plans) {
+    byTier[p.tier] = byTier[p.tier] || {};
+    byTier[p.tier][p.billingCycle] = p.pricing[region].amount;
+  }
+
+  let max = null;
+  for (const cycles of Object.values(byTier)) {
+    if (cycles.monthly == null || cycles.yearly == null || cycles.monthly <= 0) continue;
+    const savings = 1 - cycles.yearly / (cycles.monthly * 12);
+    const percent = Math.round(savings * 100);
+    if (percent > 0 && (max == null || percent > max)) max = percent;
+  }
+  return max;
+};
+
+const getActivePlans = async (user) => {
+  const region = resolveRegion(user);
+  const plans = await Plan.find({ isActive: true }).sort({ displayOrder: 1 }).lean();
+
   const grouped = { monthly: [], yearly: [] };
   for (const p of plans) {
-    (grouped[p.billingCycle] || (grouped[p.billingCycle] = [])).push(toClientPlan(p));
+    (grouped[p.billingCycle] || (grouped[p.billingCycle] = [])).push(toClientPlan(p, region));
   }
-  return grouped;
+
+  const override = await pricingSettingService.getOverride();
+  const yearlyDiscountPercent = override ?? computeMaxYearlySavingsPercent(plans, region);
+
+  return { ...grouped, yearlyDiscountPercent };
 };
 
 // First subscription to this tier gets the launch price (if the plan defines one).
-const computeAmount = async (plan, userId) => {
-  if (plan.launchAmount != null) {
+const computeAmount = async (plan, userId, region) => {
+  const pricing = plan.pricing[region];
+  if (pricing.launchAmount != null) {
     const priorPaid = await Payment.exists({ user: userId, tier: plan.tier, status: 'paid' });
-    if (!priorPaid) return plan.launchAmount;
+    if (!priorPaid) return pricing.launchAmount;
   }
-  return plan.amount;
+  return pricing.amount;
 };
 
 // ── Create order (with the anti-double-charge guard) ──────────────────────────
 
-const createOrder = async ({ user, tier, billingCycle }, req) => {
+const createOrder = async ({ user, tier, billingCycle, applyWalletCredit = true }, req) => {
   const plan = await Plan.findOne({ tier, billingCycle, isActive: true });
   if (!plan) {
     throw new AppError(AUTH_MESSAGES.PLAN_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'PLAN_NOT_FOUND');
   }
+  const region = resolveRegion(user);
+  const currency = CURRENCY_BY_REGION[region];
 
   // 1) Release abandoned open orders so the lock isn't held forever.
   await Payment.updateMany(
@@ -118,26 +156,42 @@ const createOrder = async ({ user, tier, billingCycle }, req) => {
     }
   }
 
-  // 4) Server computes the amount — never the client.
-  const amount = await computeAmount(plan, user._id);
+  // 4) Server computes the amount — never the client. Region (and therefore
+  //    currency) is resolved server-side from the user's own country, also
+  //    never trusted from the client.
+  const amount = await computeAmount(plan, user._id, region);
+
+  // 4b) Auto-apply wallet credit (referral rewards) unless the client opts out.
+  // Debit doesn't happen here — an abandoned order must not consume real
+  // credit — it's applied in activate() once the payment is confirmed paid.
+  // MIN_CHARGE keeps Razorpay's own ₹1 minimum-order-amount requirement intact.
+  const MIN_CHARGE = 100;
+  const walletApplied = applyWalletCredit ? Math.min(user.walletBalance || 0, Math.max(amount - MIN_CHARGE, 0)) : 0;
+  const chargeable = amount - walletApplied;
+
   const receipt = `rcpt_${crypto.randomBytes(10).toString('hex')}`;
 
   const order = await razorpayService.createOrder({
-    amount,
-    currency: plan.currency,
+    amount: chargeable,
+    currency,
     receipt,
     notes: { userId: String(user._id), tier, billingCycle },
   });
 
   // 5) Persist the Payment. The partial-unique index guarantees only one open
   //    order per user — a racing request hits E11000 and we reuse the winner.
+  // `amount` stores the actually-chargeable value (post-credit) so the
+  // existing webhook amount-match defense and revenue analytics are untouched;
+  // amountBeforeCredit/walletApplied record the discount itself.
   let payment;
   try {
     payment = await Payment.create({
       user: user._id,
       plan: plan._id,
-      amount,
-      currency: plan.currency,
+      amount: chargeable,
+      amountBeforeCredit: walletApplied > 0 ? amount : 0,
+      walletApplied,
+      currency,
       tier,
       billingCycle,
       status: 'created',
@@ -153,7 +207,7 @@ const createOrder = async ({ user, tier, billingCycle }, req) => {
     throw err;
   }
 
-  audit(AUDIT_EVENTS.PAYMENT_INITIATED, user._id, req, { orderId: order.id, amount, tier, billingCycle });
+  audit(AUDIT_EVENTS.PAYMENT_INITIATED, user._id, req, { orderId: order.id, amount: chargeable, walletApplied, tier, billingCycle });
   return orderResponse(payment, plan, false);
 };
 
@@ -166,6 +220,7 @@ const orderResponse = (payment, plan, reused) => ({
   planName: plan.name,
   tier: payment.tier,
   billingCycle: payment.billingCycle,
+  walletApplied: payment.walletApplied || 0,
   reused,
 });
 
@@ -232,6 +287,36 @@ const activate = async (payment, { gatewayPaymentId = null, signature = null } =
   audit(AUDIT_EVENTS.PAYMENT_SUCCEEDED, paid.user, req, { orderId: paid.gatewayOrderId, amount: paid.amount });
   audit(AUDIT_EVENTS.SUBSCRIPTION_CREATED, paid.user, req, { tier: paid.tier, periodEnd });
 
+  // Debit whatever wallet credit was applied to THIS order — deliberately
+  // done here (on confirmed payment), not at order creation, so an abandoned
+  // order never consumes real credit.
+  if (paid.walletApplied > 0) {
+    walletService
+      .redeem({ user: paid.user, amount: paid.walletApplied, type: 'redemption', payment: paid._id, description: 'Applied to subscription purchase' })
+      .then(() => audit(AUDIT_EVENTS.WALLET_REDEEMED, paid.user, req, { amount: paid.walletApplied, paymentId: paid._id }))
+      .catch((err) => console.error('subscription.service.activate: wallet redemption failed (non-fatal):', err.message));
+  }
+
+  // Reward the referrer if this is the referee's first-ever paid subscription.
+  // Never allowed to break activation — same fire-and-forget philosophy as
+  // the admin notification below.
+  referralService.creditRewardForFirstPayment(paid, req).catch((err) => {
+    console.error('subscription.service.activate: referral reward failed (non-fatal):', err.message);
+  });
+
+  User.findById(paid.user)
+    .select('name')
+    .then((purchaser) => {
+      if (!purchaser) return;
+      notificationService.notifyAdmins({
+        type: notificationService.NOTIFICATION_TYPES.SUBSCRIPTION_PURCHASED,
+        title: 'New Subscription',
+        body: `${purchaser.name} purchased the ${plan?.name ?? paid.tier} plan.`,
+        data: { userId: paid.user, tier: paid.tier },
+      });
+    })
+    .catch(() => {});
+
   return subscription;
 };
 
@@ -289,7 +374,7 @@ const verifyPayment = async ({ user, orderId, paymentId, signature }, req) => {
   }
 
   await activate(payment, { gatewayPaymentId: paymentId, signature }, req);
-  return getMySubscription(user._id);
+  return getMySubscription(user);
 };
 
 // ── Webhook path (authoritative) ──────────────────────────────────────────────
@@ -336,7 +421,9 @@ const handleWebhook = async ({ rawBody, signature }, req) => {
 
 // ── Current subscription (with lazy expiry) ───────────────────────────────────
 
-const getMySubscription = async (userId) => {
+const getMySubscription = async (user) => {
+  const userId = user._id;
+  const region = resolveRegion(user);
   const sub = await Subscription.findOne({ user: userId, status: 'active' })
     .sort({ currentPeriodEnd: -1 })
     .populate('plan');
@@ -354,6 +441,11 @@ const getMySubscription = async (userId) => {
     return { active: false, tier: null, status: 'expired', currentPeriodEnd: sub.currentPeriodEnd };
   }
 
+  // Surfaces the monthly application-usage counter on the same status fetch
+  // the app already polls everywhere (SubscriptionContext) — no separate
+  // endpoint needed for the upsell usage pill.
+  const usage = await getApplicationUsage(user);
+
   return {
     active: true,
     tier: sub.tier,
@@ -361,7 +453,62 @@ const getMySubscription = async (userId) => {
     billingCycle: sub.billingCycle,
     currentPeriodStart: sub.currentPeriodStart,
     currentPeriodEnd: sub.currentPeriodEnd,
-    plan: sub.plan ? toClientPlan(sub.plan) : null,
+    plan: sub.plan ? toClientPlan(sub.plan, region) : null,
+    applicationsUsed: usage.applicationsUsed,
+    applicationLimit: usage.applicationLimit,
+    applicationsRemaining: usage.applicationsRemaining,
+  };
+};
+
+// ── Admin analytics (stats row / revenue-by-tier donut / recent subscribers) ──
+
+const getAdminAnalytics = async () => {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const renewalWindowEnd = new Date(now.getTime() + RENEWAL_WINDOW_MS);
+
+  const [revenueAgg, activeSubscribers, renewalDue, expiredSubscriptions, tierAgg, recentSubs] = await Promise.all([
+    Payment.aggregate([
+      { $match: { status: 'paid', currency: 'INR', createdAt: { $gte: monthStart } } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]),
+    Subscription.countDocuments({ status: 'active', currentPeriodEnd: { $gt: now } }),
+    Subscription.countDocuments({ status: 'active', currentPeriodEnd: { $gt: now, $lte: renewalWindowEnd } }),
+    Subscription.countDocuments({ status: 'expired' }),
+    Subscription.aggregate([
+      { $match: { status: 'active', currentPeriodEnd: { $gt: now } } },
+      { $group: { _id: '$tier', count: { $sum: 1 } } },
+    ]),
+    Subscription.find()
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .populate('user', 'name')
+      .populate('plan', 'name'),
+  ]);
+
+  const tierCounts = {};
+  for (const row of tierAgg) tierCounts[row._id] = row.count;
+
+  const tierDistribution = Plan.PLAN_TIERS.map((tier) => {
+    const count = tierCounts[tier] || 0;
+    const percent = activeSubscribers > 0 ? Math.round((count / activeSubscribers) * 100) : 0;
+    return { tier, count, percent };
+  });
+
+  return {
+    monthlyRevenueInr: revenueAgg[0]?.total || 0,
+    activeSubscribers,
+    renewalDue,
+    expiredSubscriptions,
+    tierDistribution,
+    recentSubscribers: recentSubs.map((s) => ({
+      id: s._id,
+      candidate: s.user?.name || 'Unknown',
+      plan: s.plan?.name || s.tier,
+      tier: s.tier,
+      startDate: s.currentPeriodStart,
+      expiryDate: s.currentPeriodEnd,
+    })),
   };
 };
 
@@ -371,4 +518,5 @@ module.exports = {
   verifyPayment,
   handleWebhook,
   getMySubscription,
+  getAdminAnalytics,
 };

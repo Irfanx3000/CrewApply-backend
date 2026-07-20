@@ -388,6 +388,28 @@ const getDocumentFile = async (userId, docId) => {
   return { absolutePath, mimeType: doc.mimeType, originalName: doc.originalName };
 };
 
+/**
+ * Admin equivalent of getDocumentFile — no ownership restriction (an admin can
+ * review any applicant's submitted documents), but still requires the document
+ * to be active and to actually exist on disk. Gated by normal admin auth at
+ * the route level (authenticate + authorize(ADMIN)), not a scoped view token —
+ * a web admin panel can attach a real Authorization header, unlike the mobile
+ * app's <Image>/Linking.openURL flows that needed the token-in-URL workaround.
+ */
+const getAdminDocumentFile = async (docId) => {
+  const doc = await Document.findOne({ _id: docId, status: 'active' }).lean();
+  if (!doc) {
+    throw new AppError(AUTH_MESSAGES.DOCUMENT_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'NOT_FOUND');
+  }
+
+  const absolutePath = path.join(__dirname, '..', doc.path);
+  if (!fs.existsSync(absolutePath)) {
+    throw new AppError(AUTH_MESSAGES.DOCUMENT_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'NOT_FOUND');
+  }
+
+  return { absolutePath, mimeType: doc.mimeType, originalName: doc.originalName, ownerUserId: doc.user };
+};
+
 module.exports = {
   computeProfileCompletion,
   uploadProfilePhoto,
@@ -407,4 +429,5 @@ module.exports = {
   deleteDocument,
   getAllDocuments,
   getDocumentFile,
+  getAdminDocumentFile,
 };

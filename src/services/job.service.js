@@ -1,18 +1,19 @@
 'use strict';
 
 const Job = require('../models/job.model');
+const Application = require('../models/application.model');
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
 
 // ── Status lifecycle ─────────────────────────────────────────────────────────
 
+// Deliberately simple: 3 statuses, freely movable between all of them in
+// either direction — no linear pipeline to reason about.
 const STATUS_TRANSITIONS = Object.freeze({
   draft: ['published', 'archived'],
-  published: ['paused', 'closed'],
-  paused: ['published', 'closed'],
-  closed: ['archived'],
-  archived: [],
+  published: ['draft', 'archived'],
+  archived: ['draft', 'published'],
 });
 
 // Fields an admin is allowed to set — never spread req.body directly onto the model.
@@ -24,26 +25,16 @@ const ALLOWED_JOB_FIELDS = [
   'rank',
   'designation',
   'vesselType',
-  'vesselName',
   'location',
-  'joiningLocation',
   'employmentType',
-  'contractDuration',
   'experience',
   'salary',
   'description',
-  'responsibilities',
-  'requirements',
-  'requiredSkills',
-  'requiredCertificates',
-  'nationalityRequirements',
-  'benefits',
   'requiredDocuments',
   'joiningDate',
   'applicationDeadline',
-  'vacancies',
   'featured',
-  'urgent',
+  'minimumTier',
 ];
 
 const pick = (source, fields) =>
@@ -102,8 +93,6 @@ const listPublicJobs = async (query) => {
 
   const featured = parseBoolean(query.featured);
   if (featured !== undefined) filter.featured = featured;
-  const urgent = parseBoolean(query.urgent);
-  if (urgent !== undefined) filter.urgent = urgent;
 
   const minSalary = query.minSalary !== undefined ? Number(query.minSalary) : undefined;
   const maxSalary = query.maxSalary !== undefined ? Number(query.maxSalary) : undefined;
@@ -154,7 +143,17 @@ const getAdminJobById = async (id) => {
 };
 
 const createJob = async (data, userId) => {
-  const job = await Job.create({ ...pick(data, ALLOWED_JOB_FIELDS), createdBy: userId });
+  // 'status' is deliberately NOT in ALLOWED_JOB_FIELDS — that list is shared
+  // with updateJob, and letting it through there would bypass updateStatus's
+  // transition rules entirely. Handled explicitly here instead, restricted to
+  // the two sensible initial states (validated in job.validation.js).
+  const status = data.status === 'published' ? 'published' : 'draft';
+  const job = await Job.create({
+    ...pick(data, ALLOWED_JOB_FIELDS),
+    status,
+    publishedAt: status === 'published' ? new Date() : undefined,
+    createdBy: userId,
+  });
   return presentJob(job.toObject());
 };
 
@@ -187,7 +186,6 @@ const updateStatus = async (id, nextStatus, userId) => {
 
   job.status = nextStatus;
   if (nextStatus === 'published') job.publishedAt = new Date();
-  if (nextStatus === 'closed') job.closedAt = new Date();
   job.updatedBy = userId;
   await job.save();
 
@@ -200,8 +198,19 @@ const deleteJob = async (id) => {
     throw new AppError(AUTH_MESSAGES.JOB_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'NOT_FOUND');
   }
 
-  if (job.status !== 'draft') {
+  if (!['draft', 'archived'].includes(job.status)) {
     throw new AppError(AUTH_MESSAGES.JOB_DELETE_NOT_ALLOWED, HTTP_STATUS.BAD_REQUEST, 'DELETE_NOT_ALLOWED');
+  }
+
+  // A draft can never have applications (applying requires status ===
+  // 'published'), but an archived job was published at some point and may
+  // have real applicants — deleting it would leave their Applications
+  // pointing at nothing, silently erasing "which job did I apply to" from
+  // their history. Archive is the deliberate end state for that case; hard
+  // delete is only for jobs no one ever actually applied to.
+  const hasApplications = await Application.exists({ job: job._id });
+  if (hasApplications) {
+    throw new AppError(AUTH_MESSAGES.JOB_DELETE_HAS_APPLICATIONS, HTTP_STATUS.BAD_REQUEST, 'JOB_HAS_APPLICATIONS');
   }
 
   await job.deleteOne();
@@ -217,4 +226,5 @@ module.exports = {
   updateJob,
   updateStatus,
   deleteJob,
+  presentJob,
 };

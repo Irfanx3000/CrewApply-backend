@@ -1,6 +1,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const { PLAN_TIERS } = require('./plan.model');
 
 // Mirrors CrewApply/src/constants/maritime.constants.js DEPARTMENTS — keep in sync.
 const JOB_DEPARTMENTS = Object.freeze([
@@ -47,8 +48,6 @@ const JOB_EMPLOYMENT_TYPES = Object.freeze([
 const JOB_STATUSES = Object.freeze([
   'draft',
   'published',
-  'paused',
-  'closed',
   'archived',
 ]);
 
@@ -135,33 +134,15 @@ const jobSchema = new mongoose.Schema(
       enum: { values: JOB_VESSEL_TYPES, message: 'Invalid vessel type.' },
     },
 
-    vesselName: {
-      type: String,
-      trim: true,
-      default: null,
-    },
-
     location: {
       type: locationSchema,
       required: true,
-    },
-
-    joiningLocation: {
-      type: String,
-      trim: true,
-      default: null,
     },
 
     employmentType: {
       type: String,
       required: [true, 'Employment type is required.'],
       enum: { values: JOB_EMPLOYMENT_TYPES, message: 'Invalid employment type.' },
-    },
-
-    contractDuration: {
-      type: String,
-      trim: true,
-      default: null,
     },
 
     experience: {
@@ -180,31 +161,21 @@ const jobSchema = new mongoose.Schema(
       maxlength: [5000, 'Description must not exceed 5000 characters.'],
     },
 
-    responsibilities: { type: [String], default: [] },
-    requirements: { type: [String], default: [] },
-    requiredSkills: { type: [String], default: [] },
-    requiredCertificates: { type: [String], default: [] },
-    nationalityRequirements: { type: [String], default: [] },
-    benefits: { type: [String], default: [] },
-
-    // Structured categories (distinct from the free-text `requiredCertificates`
-    // above) — an applicant must have an active Document in every one of these
-    // categories before they're allowed to apply. References DocumentType.key,
-    // validated dynamically at the request layer (see job.validation.js) since
-    // the set of valid categories is admin-configurable, not a fixed schema enum.
+    // An applicant must have an active Document in every one of these categories
+    // before they're allowed to apply. References DocumentType.key, validated
+    // dynamically at the request layer (see job.validation.js) since the set of
+    // valid categories is admin-configurable, not a fixed schema enum.
     requiredDocuments: {
       type: [String],
       default: [],
     },
 
     joiningDate: { type: Date, default: null },
-    applicationDeadline: { type: Date, default: null },
 
-    vacancies: {
-      type: Number,
-      default: 1,
-      min: [1, 'Vacancies must be at least 1.'],
-    },
+    // Not exposed on the simplified admin form (defaults to null = always
+    // open) but actively used server-side: application.service.js gates
+    // eligibility on this via jobIsOpenForApplications().
+    applicationDeadline: { type: Date, default: null },
 
     status: {
       type: String,
@@ -213,7 +184,18 @@ const jobSchema = new mongoose.Schema(
     },
 
     featured: { type: Boolean, default: false },
-    urgent: { type: Boolean, default: false },
+
+    // Minimum subscription tier required to apply (see plan.model.js's
+    // isTierSufficient). Default 'start' means "any active subscriber can
+    // apply" — today's behavior — so existing jobs are unaffected until an
+    // admin explicitly tags one as premium/elite-only. Jobs stay visible to
+    // everyone regardless of this field; only applying is gated.
+    minimumTier: {
+      type: String,
+      enum: { values: PLAN_TIERS, message: 'Invalid minimum tier.' },
+      default: 'start',
+      index: true,
+    },
 
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
@@ -229,7 +211,6 @@ const jobSchema = new mongoose.Schema(
     },
 
     publishedAt: { type: Date, default: null },
-    closedAt: { type: Date, default: null },
   },
   {
     timestamps: true,

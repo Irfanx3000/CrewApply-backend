@@ -1,6 +1,7 @@
 'use strict';
 
 const authService = require('../services/auth.service');
+const notificationService = require('../services/notification.service');
 const asyncHandler = require('../utils/asyncHandler');
 const { successResponse } = require('../utils/apiResponse');
 const { AUTH_MESSAGES } = require('../constants/messages');
@@ -15,10 +16,10 @@ const { HTTP_STATUS } = require('../constants/httpStatus');
 // ── POST /auth/register ───────────────────────────────────────────────────────
 
 const register = asyncHandler(async (req, res) => {
-  const { name, dateOfBirth, gender, nationality, country, state, city, phone, email, password } = req.body;
+  const { name, dateOfBirth, gender, nationality, country, state, city, phone, email, password, referralCode } = req.body;
 
   const result = await authService.register(
-    { name, dateOfBirth, gender, nationality, country, state, city, phone, email, password },
+    { name, dateOfBirth, gender, nationality, country, state, city, phone, email, password, referralCode },
     req
   );
 
@@ -28,9 +29,9 @@ const register = asyncHandler(async (req, res) => {
 // ── POST /auth/send-otp ───────────────────────────────────────────────────────
 
 const sendOtp = asyncHandler(async (req, res) => {
-  const { phone } = req.body;
+  const { email } = req.body;
 
-  const result = await authService.sendOtp(phone, req);
+  const result = await authService.sendOtp(email, req);
 
   return successResponse(res, AUTH_MESSAGES.OTP_RESENT, result);
 });
@@ -38,9 +39,16 @@ const sendOtp = asyncHandler(async (req, res) => {
 // ── POST /auth/verify-mobile ──────────────────────────────────────────────────
 
 const verifyMobile = asyncHandler(async (req, res) => {
-  const { phone, otp } = req.body;
+  const { email, otp } = req.body;
 
-  const result = await authService.verifyMobile({ phone, otp }, req);
+  const result = await authService.verifyMobile({ email, otp }, req);
+
+  await notificationService.notifyAdmins({
+    type: notificationService.NOTIFICATION_TYPES.USER_REGISTERED,
+    title: 'New User Registered',
+    body: `${result.user.name} has joined CrewApply.`,
+    data: { userId: result.user.id },
+  });
 
   return successResponse(res, AUTH_MESSAGES.MOBILE_VERIFIED, result, HTTP_STATUS.OK);
 });

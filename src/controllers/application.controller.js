@@ -2,6 +2,7 @@
 
 const applicationService = require('../services/application.service');
 const auditService = require('../services/audit.service');
+const notificationService = require('../services/notification.service');
 const asyncHandler = require('../utils/asyncHandler');
 const { successResponse, paginationMeta } = require('../utils/apiResponse');
 const { HTTP_STATUS } = require('../constants/httpStatus');
@@ -20,6 +21,13 @@ const apply = asyncHandler(async (req, res) => {
     event: AUDIT_EVENTS.APPLICATION_CREATED,
     userId: req.user._id,
     metadata: { applicationId: application.id, jobId: req.body.jobId },
+  });
+
+  await notificationService.notifyAdmins({
+    type: notificationService.NOTIFICATION_TYPES.APPLICATION_SUBMITTED,
+    title: 'New Application',
+    body: `${req.user.name} applied for ${application.job?.title ?? 'a job'}.`,
+    data: { applicationId: application.id, jobId: application.job?.id ?? req.body.jobId },
   });
 
   return successResponse(res, AUTH_MESSAGES.APPLICATION_SUBMITTED, { application }, HTTP_STATUS.CREATED);

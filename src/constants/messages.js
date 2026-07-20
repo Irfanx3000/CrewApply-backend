@@ -17,6 +17,8 @@ const AUTH_MESSAGES = Object.freeze({
   EMAIL_NOT_VERIFIED: 'Please verify your email address before logging in.',
   ACCOUNT_LOCKED: 'Your account has been temporarily locked due to multiple failed login attempts. Please try again later.',
   ACCOUNT_INACTIVE: 'Your account has been deactivated. Please contact support.',
+  ACCOUNT_BLOCKED: 'Your account has been blocked by an administrator. Please contact support if you believe this is a mistake.',
+  ACCOUNT_DELETED: 'Your account has been deleted. Please contact support if you believe this is a mistake.',
 
   // Tokens
   TOKEN_REFRESHED: 'Access token refreshed successfully.',
@@ -45,9 +47,9 @@ const AUTH_MESSAGES = Object.freeze({
   FORBIDDEN: 'You do not have permission to access this resource.',
 
   // OTP
-  OTP_SENT: 'Verification code sent to your mobile number.',
+  OTP_SENT: 'Verification code sent to your email.',
   OTP_RESENT: 'A new verification code has been sent.',
-  OTP_VERIFIED: 'Phone number verified successfully.',
+  OTP_VERIFIED: 'Email verified successfully.',
   OTP_EXPIRED: 'Verification code has expired. Please request a new one.',
   OTP_INVALID: 'Invalid verification code.',
   OTP_NOT_FOUND: 'No verification code found. Please request a new one.',
@@ -58,13 +60,21 @@ const AUTH_MESSAGES = Object.freeze({
   PHONE_ALREADY_REGISTERED: 'An account with this phone number already exists.',
 
   // Registration (new flow)
-  REGISTER_PENDING: 'Account created. Please verify your phone number to continue.',
-  MOBILE_VERIFIED: 'Phone number verified. Your account is now active.',
+  REGISTER_PENDING: 'Account created. Please check your email for a verification code.',
+  MOBILE_VERIFIED: 'Email verified. Your account is now active.',
 
   // Profile
   PROFILE_UPDATED: 'Profile updated successfully.',
   MARITIME_PROFILE_UPDATED: 'Maritime profile saved successfully.',
   PROFILE_PHOTO_UPDATED: 'Profile photo updated successfully.',
+
+  // Users (admin)
+  USERS_FETCHED: 'Users fetched successfully.',
+  USER_FETCHED: 'User fetched successfully.',
+  USER_NOT_FOUND: 'User not found.',
+  USER_STATUS_UPDATED: 'User status updated successfully.',
+  INVALID_USER_STATUS: 'Invalid user status.',
+  CANNOT_MODIFY_NON_USER_ACCOUNT: 'Only seafarer/recruiter accounts can be managed from this panel.',
 
   // Documents
   DOCUMENT_UPLOADED: 'Document uploaded successfully.',
@@ -111,17 +121,26 @@ const AUTH_MESSAGES = Object.freeze({
   JOB_UPDATED: 'Job updated successfully.',
   JOB_FETCHED: 'Job fetched successfully.',
   JOBS_FETCHED: 'Jobs fetched successfully.',
+  JOB_STATS_FETCHED: 'Job application statistics fetched successfully.',
   JOB_NOT_FOUND: 'Job not found.',
   JOB_STATUS_UPDATED: 'Job status updated successfully.',
   JOB_INVALID_STATUS_TRANSITION: 'Cannot change job status from "%s" to "%s".',
   JOB_DELETED: 'Job deleted successfully.',
-  JOB_DELETE_NOT_ALLOWED: 'Only draft jobs can be deleted. Archive this job instead.',
+  JOB_DELETE_NOT_ALLOWED: 'Only draft or archived jobs can be deleted.',
+  JOB_DELETE_HAS_APPLICATIONS: 'This job has applications against it and cannot be deleted.',
+
+  // Saved jobs
+  SAVED_JOBS_FETCHED: 'Saved jobs fetched successfully.',
+  JOB_SAVED: 'Job saved successfully.',
+  JOB_UNSAVED: 'Job removed from saved jobs.',
 
   // Subscriptions & payments
   PLANS_FETCHED: 'Plans fetched successfully.',
   PLAN_NOT_FOUND: 'This plan is not available.',
   PLAN_CREATED: 'Plan created successfully.',
   PLAN_UPDATED: 'Plan updated successfully.',
+  PRICING_SETTINGS_FETCHED: 'Pricing settings fetched successfully.',
+  PRICING_SETTINGS_UPDATED: 'Pricing settings updated successfully.',
   ORDER_CREATED: 'Payment order created.',
   PAYMENT_IN_PROGRESS: 'A payment is already in progress. Please complete or wait for it before starting another.',
   PAYMENT_ALREADY_MADE: 'Your previous payment already went through — your subscription is now active.',
@@ -131,9 +150,24 @@ const AUTH_MESSAGES = Object.freeze({
   PAYMENT_NOT_FOUND: 'Payment record not found.',
   WEBHOOK_INVALID_SIGNATURE: 'Invalid webhook signature.',
   SUBSCRIPTION_FETCHED: 'Subscription fetched successfully.',
+  SUBSCRIPTION_ANALYTICS_FETCHED: 'Subscription analytics fetched successfully.',
   SUBSCRIPTION_REQUIRED: 'An active subscription is required to access this feature.',
   SUBSCRIPTION_TIER_REQUIRED: 'Your current plan does not include this feature. Please upgrade.',
+  APPLICATION_LIMIT_REACHED: 'You have reached your monthly application limit. Upgrade your plan or wait until next month.',
   PAYMENTS_NOT_CONFIGURED: 'Payments are not configured. Please try again later.',
+
+  // Referrals & wallet
+  REFERRAL_FETCHED: 'Referral details fetched successfully.',
+  REFERRAL_CODE_GENERATED: 'Referral code generated successfully.',
+  REFERRALS_FETCHED: 'Referrals fetched successfully.',
+  REFERRAL_NOT_FOUND: 'Referral not found.',
+  REFERRAL_STATUS_UPDATED: 'Referral status updated successfully.',
+  INVALID_REFERRAL_STATUS: 'Invalid referral status.',
+  REFERRAL_SETTINGS_FETCHED: 'Referral settings fetched successfully.',
+  REFERRAL_SETTINGS_UPDATED: 'Referral settings updated successfully.',
+  INVALID_REFERRAL_CODE: 'This referral code is invalid.',
+  SELF_REFERRAL_NOT_ALLOWED: 'You cannot use your own referral code.',
+  WALLET_FETCHED: 'Wallet fetched successfully.',
 
   // Applications
   APPLICATION_SUBMITTED: 'Application submitted successfully.',
@@ -146,6 +180,17 @@ const AUTH_MESSAGES = Object.freeze({
   JOB_NOT_OPEN_FOR_APPLICATIONS: 'This job is no longer accepting applications.',
   MISSING_REQUIRED_DOCUMENTS: 'You are missing required documents for this job.',
   ELIGIBILITY_FETCHED: 'Eligibility fetched successfully.',
+  APPLICATION_STATUS_UPDATED: 'Application status updated successfully.',
+  APPLICATION_INVALID_STATUS_TRANSITION: 'Cannot change application status from "%s" to "%s".',
+
+  // Notifications
+  NOTIFICATIONS_FETCHED: 'Notifications fetched successfully.',
+  NOTIFICATION_NOT_FOUND: 'Notification not found.',
+  NOTIFICATION_MARKED_READ: 'Notification marked as read.',
+  ALL_NOTIFICATIONS_MARKED_READ: 'All notifications marked as read.',
+  UNREAD_COUNT_FETCHED: 'Unread count fetched successfully.',
+  DEVICE_TOKEN_REGISTERED: 'Device registered for push notifications.',
+  DEVICE_TOKEN_REMOVED: 'Device removed from push notifications.',
 
   // Document Types
   DOCUMENT_TYPE_CREATED: 'Document type created successfully.',

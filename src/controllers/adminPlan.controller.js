@@ -3,6 +3,7 @@
 const asyncHandler = require('../utils/asyncHandler');
 const { successResponse } = require('../utils/apiResponse');
 const planService = require('../services/plan.service');
+const pricingSettingService = require('../services/pricingSetting.service');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
 
@@ -27,4 +28,22 @@ const deactivate = asyncHandler(async (req, res) => {
   return successResponse(res, AUTH_MESSAGES.PLAN_UPDATED, plan);
 });
 
-module.exports = { list, create, update, deactivate };
+// PATCH /admin/plans/tier/:tier — updates the (monthly, yearly) pair together,
+// so the admin UI never has to juggle two separate Mongo _ids for one tier.
+const updateTierPricing = asyncHandler(async (req, res) => {
+  const plans = await planService.updateTierPricing(req.params.tier, req.body, req.user._id, req);
+  return successResponse(res, AUTH_MESSAGES.PLAN_UPDATED, plans);
+});
+
+const getPricingSettings = asyncHandler(async (req, res) => {
+  const yearlyDiscountOverridePercent = await pricingSettingService.getOverride();
+  return successResponse(res, AUTH_MESSAGES.PRICING_SETTINGS_FETCHED, { yearlyDiscountOverridePercent });
+});
+
+const updatePricingSettings = asyncHandler(async (req, res) => {
+  const percent = req.body.yearlyDiscountOverridePercent ?? null;
+  const yearlyDiscountOverridePercent = await pricingSettingService.setOverride(percent, req.user._id, req);
+  return successResponse(res, AUTH_MESSAGES.PRICING_SETTINGS_UPDATED, { yearlyDiscountOverridePercent });
+});
+
+module.exports = { list, create, update, deactivate, updateTierPricing, getPricingSettings, updatePricingSettings };

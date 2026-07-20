@@ -24,7 +24,12 @@ const paymentSchema = new mongoose.Schema(
     },
 
     // Snapshot of what was charged (server-computed) — never trusted from the client.
+    // `amount` is the actual chargeable value AFTER any wallet credit was applied,
+    // so existing webhook amount-match defense and revenue analytics stay correct
+    // untouched; `amountBeforeCredit`/`walletApplied` record the discount itself.
     amount: { type: Number, required: true, min: 0 }, // paise
+    amountBeforeCredit: { type: Number, default: 0 }, // paise, 0 when no wallet credit was applied
+    walletApplied: { type: Number, default: 0 }, // paise debited from the buyer's wallet for this order
     currency: { type: String, default: 'INR' },
     tier: { type: String, required: true },
     billingCycle: { type: String, required: true },
