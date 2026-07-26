@@ -12,6 +12,7 @@ const { hasActive } = require('../middleware/subscription.middleware');
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
+const { escapeRegex } = require('../utils/searchUtil');
 
 const JOB_POPULATE_FIELDS = 'title companyName companyLogoUrl location employmentType salary status applicationDeadline requiredDocuments';
 const USER_APPLICANT_POPULATE_FIELDS =
@@ -23,8 +24,6 @@ const parsePagination = (query) => {
   const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 50);
   return { page, limit, skip: (page - 1) * limit };
 };
-
-const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Turns "selected" into "selected" and "selected,rejected" into { $in: [...] } —
 // lets the admin "Closed" tab filter on multiple terminal statuses at once.

@@ -1,12 +1,15 @@
 'use strict';
 
+const mongoose = require('mongoose');
 const Notification = require('../models/notification.model');
 const User = require('../models/user.model');
 const pushService = require('./push.service');
+const resendService = require('./resend.service');
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
 const { ROLES } = require('../constants/roles');
+const { PLAN_TIERS, TIER_RANK } = require('../models/plan.model');
 
 /**
  * Creates a notification for a user and fires a push send in the background.
@@ -46,6 +49,54 @@ const notifyAdmins = async ({ type, title, body, data = null }) => {
   }
 };
 
+/**
+ * Notifies every user whose active subscription tier qualifies for this job
+ * (same "at least this tier" rule application.service.js gates applying
+ * with — see plan.model.js's isTierSufficient/TIER_RANK) that it was just
+ * posted. One independent Notification doc per eligible user, same shape
+ * as notifyAdmins() above. Never throws — a job-posting request must
+ * succeed regardless of how many (or how few) users end up notified.
+ *
+ * Channel is tier-gated, matching the Plan.features copy shown on the
+ * Subscription screen: Crew Start is "Job alerts (App)" — in-app/push only —
+ * while Premium ("Email + App") and Elite ("All Channels") also get an
+ * email via resendService. The in-app notification (and its push send,
+ * inside create()) always fires regardless of tier; email is the one
+ * tier-gated extra channel.
+ */
+const notifyEligibleUsersForJob = async (job) => {
+  try {
+    const minRank = TIER_RANK[job.minimumTier] || TIER_RANK.start;
+    const qualifyingTiers = PLAN_TIERS.filter((tier) => TIER_RANK[tier] >= minRank);
+
+    const users = await User.find({
+      subscriptionStatus: 'active',
+      subscriptionTier: { $in: qualifyingTiers },
+    }).select('_id email subscriptionTier');
+
+    const title = 'New job matching your plan';
+    const body = `${job.title} at ${job.companyName} was just posted for ${job.rank} — ${job.department}.`;
+
+    await Promise.all(
+      users.map(async (u) => {
+        await create({
+          userId: u._id,
+          type: Notification.NOTIFICATION_TYPES.NEW_JOB_MATCH,
+          title,
+          body,
+          data: { jobId: job._id },
+        });
+
+        if (u.subscriptionTier !== 'start') {
+          resendService.sendJobAlertEmail(u.email, job).catch(() => {});
+        }
+      })
+    );
+  } catch (err) {
+    console.error('NotificationService: failed to notify eligible users for job:', err.message);
+  }
+};
+
 // Accepts either a single type or a comma-separated list (e.g. the admin
 // panel asks for "APPLICATION_SUBMITTED,SUBSCRIPTION_PURCHASED,USER_REGISTERED")
 // — mirrors application.service.js's parseCsvFilter().
@@ -76,6 +127,17 @@ const getUnreadCount = async (userId, { type } = {}) => {
   return Notification.countDocuments(filter);
 };
 
+// Powers the admin panel's per-section sidebar badges (Users/Applications/
+// Subscriptions/Consultancy each show their own unread count) — one grouped
+// query instead of one countDocuments() per section.
+const getUnreadCountsByType = async (userId) => {
+  const rows = await Notification.aggregate([
+    { $match: { user: new mongoose.Types.ObjectId(String(userId)), read: false } },
+    { $group: { _id: '$type', count: { $sum: 1 } } },
+  ]);
+  return Object.fromEntries(rows.map((r) => [r._id, r.count]));
+};
+
 const markRead = async (userId, notificationId) => {
   const notification = await Notification.findOneAndUpdate(
     { _id: notificationId, user: userId },
@@ -90,8 +152,15 @@ const markRead = async (userId, notificationId) => {
   return notification;
 };
 
-const markAllRead = async (userId) => {
-  await Notification.updateMany({ user: userId, read: false }, { read: true, readAt: new Date() });
+// `type` is optional so the admin panel can clear just one section's badge
+// (e.g. visiting Applications marks only APPLICATION_SUBMITTED notifications
+// read) without dismissing the other sections' unread counts — the existing
+// "mark everything read" bell-dropdown action still works unchanged by
+// simply omitting it.
+const markAllRead = async (userId, { type } = {}) => {
+  const filter = { user: userId, read: false };
+  if (type) filter.type = parseCsvFilter(type);
+  await Notification.updateMany(filter, { read: true, readAt: new Date() });
 };
 
 const registerDeviceToken = async (userId, { token, platform }) => {
@@ -106,8 +175,10 @@ const deregisterDeviceToken = async (userId, token) => {
 module.exports = {
   create,
   notifyAdmins,
+  notifyEligibleUsersForJob,
   listForUser,
   getUnreadCount,
+  getUnreadCountsByType,
   markRead,
   markAllRead,
   registerDeviceToken,

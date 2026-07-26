@@ -86,6 +86,17 @@ const updateStatus = asyncHandler(async (req, res) => {
   return successResponse(res, AUTH_MESSAGES.JOB_STATUS_UPDATED, { job });
 });
 
+const uploadImage = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    throw new AppError(AUTH_MESSAGES.NO_FILE_UPLOADED, HTTP_STATUS.BAD_REQUEST, 'NO_FILE');
+  }
+
+  const relativePath = await jobService.uploadJobImage(req.file);
+  const url = `${req.protocol}://${req.get('host')}/${relativePath}`;
+
+  return successResponse(res, AUTH_MESSAGES.JOB_IMAGE_UPLOADED, { url }, HTTP_STATUS.CREATED);
+});
+
 const deleteJob = asyncHandler(async (req, res) => {
   const job = await jobService.deleteJob(req.params.id);
 
@@ -111,5 +122,6 @@ module.exports = {
   createJob,
   updateJob,
   updateStatus,
+  uploadImage,
   deleteJob,
 };

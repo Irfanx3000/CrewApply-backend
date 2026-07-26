@@ -17,8 +17,23 @@ const { UPLOADS_ROOT } = require('./src/services/storage.service');
 
 const app = express();
 
+// Deployed behind a reverse proxy (Railway) that terminates TLS — without
+// this, req.protocol/req.ip read the proxy's own connection instead of the
+// original client's, which would make generated upload URLs come back as
+// http:// even in production (browsers block that as mixed content) and
+// would make the rate limiter key off the proxy's IP instead of the client's.
+app.set('trust proxy', 1);
+
 // ── Security Headers ──────────────────────────────────────────────────────────
-app.use(helmet());
+// crossOriginResourcePolicy defaults to 'same-origin', which makes browsers
+// silently refuse to render <img>/<script> tags loaded from a different
+// origin (e.g. the admin panel on :5173 loading an uploaded job image served
+// from the API on :5000/api.crewapply.com) — it shows as a broken image with
+// no visible network error, only a CORP warning in devtools. The public
+// static routes below (/uploads/profile, /uploads/company) are explicitly
+// meant to be embedded from other origins, so relax this globally rather
+// than per-route.
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
 app.use(
@@ -69,12 +84,16 @@ app.use(express.json({
 app.use(express.urlencoded({ extended: true, limit: config.body.limit }));
 
 // ── Static uploads ────────────────────────────────────────────────────────────
-// Only profile photos are safe to serve publicly (avatars shown across the
-// app). Everything else — resumes, passports, certificates, medical, CDC,
-// visa, and any admin-configured document type — is sensitive and is only
-// reachable through the authenticated/short-lived-token-gated
-// GET /user/documents/:id/file route (see document.controller.js).
+// Only profile photos, job listing images, promo banners, and category icons
+// are safe to serve publicly (avatars and images shown across the app).
+// Everything else — resumes, passports, certificates, medical, CDC, visa, and
+// any admin-configured document type — is sensitive and is only reachable
+// through the authenticated/short-lived-token-gated GET /user/documents/:id/file
+// route (see document.controller.js).
 app.use('/uploads/profile', express.static(path.join(UPLOADS_ROOT, 'profile')));
+app.use('/uploads/company', express.static(path.join(UPLOADS_ROOT, 'company')));
+app.use('/uploads/banners', express.static(path.join(UPLOADS_ROOT, 'banners')));
+app.use('/uploads/category-icons', express.static(path.join(UPLOADS_ROOT, 'category-icons')));
 
 // ── HTTP Parameter Pollution Prevention ──────────────────────────────────────
 // Guards against duplicate query parameters (e.g. ?sort=asc&sort=desc).

@@ -72,6 +72,23 @@ const documentSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
+
+    // Distinguishes a user-uploaded file from one produced by the Resume
+    // rendering engine — lets "upload your own resume" and "build one from
+    // your Career Profile" coexist as the same Document/category, per the
+    // Career Profile Engine design.
+    source: {
+      type: String,
+      enum: { values: ['uploaded', 'generated'], message: 'Invalid document source.' },
+      default: 'uploaded',
+    },
+
+    // Provenance for a generated document — null for uploaded ones.
+    generatedFrom: {
+      resumeConfigurationId: { type: mongoose.Schema.Types.ObjectId, ref: 'ResumeConfiguration', default: null },
+      templateId: { type: mongoose.Schema.Types.ObjectId, ref: 'ResumeTemplate', default: null },
+      version: { type: Number, default: null },
+    },
   },
   {
     timestamps: true,

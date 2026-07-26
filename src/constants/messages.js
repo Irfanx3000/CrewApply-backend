@@ -76,6 +76,14 @@ const AUTH_MESSAGES = Object.freeze({
   INVALID_USER_STATUS: 'Invalid user status.',
   CANNOT_MODIFY_NON_USER_ACCOUNT: 'Only seafarer/recruiter accounts can be managed from this panel.',
 
+  // Admin accounts
+  ADMINS_FETCHED: 'Admins fetched successfully.',
+  ADMIN_INVITE_SENT: 'Invite sent successfully.',
+  ADMIN_INVITE_ACCEPTED: 'Your admin account is now active.',
+  ADMIN_ALREADY_ACTIVE: 'This email already belongs to an active admin.',
+  EMAIL_BELONGS_TO_OTHER_ACCOUNT: 'This email is already registered to a different account.',
+  ADMIN_INVITE_NOT_FOUND: 'No pending invite was found for this email.',
+
   // Documents
   DOCUMENT_UPLOADED: 'Document uploaded successfully.',
   DOCUMENT_FETCHED: 'Document fetched successfully.',
@@ -116,6 +124,14 @@ const AUTH_MESSAGES = Object.freeze({
   TOO_MANY_REQUESTS: 'Too many requests. Please slow down and try again later.',
   VALIDATION_FAILED: 'Validation failed. Please check the provided data.',
 
+  // Search
+  SEARCH_RESULTS_FETCHED: 'Search results fetched successfully.',
+  SEARCH_QUERY_TOO_SHORT: 'Search query must be at least 2 characters.',
+
+  // Dashboard
+  DASHBOARD_SUMMARY_FETCHED: 'Dashboard summary fetched successfully.',
+  DASHBOARD_CHART_FETCHED: 'Dashboard chart data fetched successfully.',
+
   // Jobs
   JOB_CREATED: 'Job created successfully.',
   JOB_UPDATED: 'Job updated successfully.',
@@ -125,6 +141,7 @@ const AUTH_MESSAGES = Object.freeze({
   JOB_NOT_FOUND: 'Job not found.',
   JOB_STATUS_UPDATED: 'Job status updated successfully.',
   JOB_INVALID_STATUS_TRANSITION: 'Cannot change job status from "%s" to "%s".',
+  JOB_IMAGE_UPLOADED: 'Job image uploaded successfully.',
   JOB_DELETED: 'Job deleted successfully.',
   JOB_DELETE_NOT_ALLOWED: 'Only draft or archived jobs can be deleted.',
   JOB_DELETE_HAS_APPLICATIONS: 'This job has applications against it and cannot be deleted.',
@@ -133,6 +150,14 @@ const AUTH_MESSAGES = Object.freeze({
   SAVED_JOBS_FETCHED: 'Saved jobs fetched successfully.',
   JOB_SAVED: 'Job saved successfully.',
   JOB_UNSAVED: 'Job removed from saved jobs.',
+
+  // Banners
+  BANNERS_FETCHED: 'Banners fetched successfully.',
+  BANNER_CREATED: 'Banner created successfully.',
+  BANNER_UPDATED: 'Banner updated successfully.',
+  BANNER_DELETED: 'Banner deleted successfully.',
+  BANNER_NOT_FOUND: 'Banner not found.',
+  BANNER_IMAGE_UPLOADED: 'Banner image uploaded successfully.',
 
   // Subscriptions & payments
   PLANS_FETCHED: 'Plans fetched successfully.',
@@ -149,12 +174,31 @@ const AUTH_MESSAGES = Object.freeze({
   PAYMENT_VERIFICATION_FAILED: 'Payment could not be verified.',
   PAYMENT_NOT_FOUND: 'Payment record not found.',
   WEBHOOK_INVALID_SIGNATURE: 'Invalid webhook signature.',
+  PAYMENTS_FETCHED: 'Payments fetched successfully.',
+  PAYMENT_STATS_FETCHED: 'Payment statistics fetched successfully.',
   SUBSCRIPTION_FETCHED: 'Subscription fetched successfully.',
   SUBSCRIPTION_ANALYTICS_FETCHED: 'Subscription analytics fetched successfully.',
+  SUBSCRIPTIONS_FETCHED: 'Subscriptions fetched successfully.',
   SUBSCRIPTION_REQUIRED: 'An active subscription is required to access this feature.',
   SUBSCRIPTION_TIER_REQUIRED: 'Your current plan does not include this feature. Please upgrade.',
   APPLICATION_LIMIT_REACHED: 'You have reached your monthly application limit. Upgrade your plan or wait until next month.',
   PAYMENTS_NOT_CONFIGURED: 'Payments are not configured. Please try again later.',
+
+  // Consultancy bookings
+  CONSULTANCY_CONFIG_FETCHED: 'Consultancy configuration fetched successfully.',
+  CONSULTANCY_FEE_UPDATED: 'Consultancy fee updated successfully.',
+  CONSULTANCY_AVAILABILITY_FETCHED: 'Availability fetched successfully.',
+  CONSULTANCY_SLOTS_FETCHED: 'Slots fetched successfully.',
+  CONSULTANCY_SLOT_NOT_AVAILABLE: 'This slot is no longer available. Please choose another.',
+  CONSULTANCY_SCHEDULE_UPDATED: 'Weekly availability schedule updated successfully.',
+  CONSULTANCY_ORDER_CREATED: 'Consultancy booking order created.',
+  CONSULTANCY_PAYMENT_VERIFIED: 'Payment verified. Your consultancy booking is confirmed and awaiting review.',
+  CONSULTANCY_BOOKINGS_FETCHED: 'Bookings fetched successfully.',
+  CONSULTANCY_BOOKING_FETCHED: 'Booking fetched successfully.',
+  CONSULTANCY_BOOKING_NOT_FOUND: 'Booking not found.',
+  CONSULTANCY_BOOKING_STATUS_UPDATED: 'Booking status updated successfully.',
+  CONSULTANCY_BOOKING_INVALID_STATUS_TRANSITION: 'This booking has already been decided and cannot be updated again.',
+  CONSULTANCY_RESUME_NOT_FOUND: 'No active resume found on your account.',
 
   // Referrals & wallet
   REFERRAL_FETCHED: 'Referral details fetched successfully.',
@@ -189,6 +233,7 @@ const AUTH_MESSAGES = Object.freeze({
   NOTIFICATION_MARKED_READ: 'Notification marked as read.',
   ALL_NOTIFICATIONS_MARKED_READ: 'All notifications marked as read.',
   UNREAD_COUNT_FETCHED: 'Unread count fetched successfully.',
+  UNREAD_COUNTS_BY_TYPE_FETCHED: 'Unread counts fetched successfully.',
   DEVICE_TOKEN_REGISTERED: 'Device registered for push notifications.',
   DEVICE_TOKEN_REMOVED: 'Device removed from push notifications.',
 
@@ -201,6 +246,41 @@ const AUTH_MESSAGES = Object.freeze({
   DOCUMENT_TYPE_NOT_FOUND: 'Document type not found.',
   DOCUMENT_TYPE_KEY_EXISTS: 'A document type with this key already exists.',
   INVALID_DOCUMENT_CATEGORY: 'Invalid or inactive document category.',
+
+  // Job Taxonomy — Department/Vessel Type
+  JOB_TAXONOMY_CREATED: 'Added successfully.',
+  JOB_TAXONOMY_UPDATED: 'Updated successfully.',
+  JOB_TAXONOMY_DEACTIVATED: 'Deactivated successfully.',
+  JOB_TAXONOMY_FETCHED: 'Fetched successfully.',
+  JOB_TAXONOMIES_FETCHED: 'Fetched successfully.',
+  JOB_TAXONOMY_NOT_FOUND: 'Not found.',
+  JOB_TAXONOMY_EXISTS: 'This value already exists.',
+  JOB_TAXONOMY_ICON_UPLOADED: 'Icon uploaded successfully.',
+
+  // Career Profile Engine
+  CAREER_PROFILE_FETCHED: 'Career profile fetched successfully.',
+  CAREER_PROFILE_UPDATED: 'Career profile updated successfully.',
+  CAREER_PROFILE_ENTRY_ADDED: 'Added successfully.',
+  CAREER_PROFILE_ENTRY_UPDATED: 'Updated successfully.',
+  CAREER_PROFILE_ENTRY_REMOVED: 'Removed successfully.',
+
+  RESUME_TEMPLATE_CREATED: 'Resume template created successfully.',
+  RESUME_TEMPLATE_UPDATED: 'Resume template updated successfully.',
+  RESUME_TEMPLATE_DEACTIVATED: 'Resume template deactivated successfully.',
+  RESUME_TEMPLATE_FETCHED: 'Resume template fetched successfully.',
+  RESUME_TEMPLATES_FETCHED: 'Resume templates fetched successfully.',
+  RESUME_TEMPLATE_NOT_FOUND: 'Resume template not found.',
+  RESUME_TEMPLATE_KEY_EXISTS: 'A resume template with this key already exists.',
+
+  RESUME_CONFIGURATION_CREATED: 'Resume created successfully.',
+  RESUME_CONFIGURATION_UPDATED: 'Resume updated successfully.',
+  RESUME_CONFIGURATION_DELETED: 'Resume deleted successfully.',
+  RESUME_CONFIGURATION_FETCHED: 'Resume fetched successfully.',
+  RESUME_CONFIGURATIONS_FETCHED: 'Resumes fetched successfully.',
+  RESUME_CONFIGURATION_NOT_FOUND: 'Resume not found.',
+
+  RESUME_GENERATED: 'Resume generated successfully.',
+  RESUME_HISTORY_FETCHED: 'Resume history fetched successfully.',
 });
 
 module.exports = { AUTH_MESSAGES };

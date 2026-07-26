@@ -16,7 +16,12 @@ router.get(
   validate(notificationValidation.unreadCountQuery),
   notificationController.getUnreadCount
 );
-router.post('/read-all', notificationController.markAllAsRead);
+router.get('/unread-count-by-type', notificationController.getUnreadCountsByType);
+router.post(
+  '/read-all',
+  validate(notificationValidation.markAllReadQuery),
+  notificationController.markAllAsRead
+);
 router.post('/:id/read', validate(notificationValidation.idParam), notificationController.markAsRead);
 router.post(
   '/device-token',

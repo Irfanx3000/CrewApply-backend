@@ -1,10 +1,20 @@
 'use strict';
 
+const path = require('path');
 const Job = require('../models/job.model');
 const Application = require('../models/application.model');
+const User = require('../models/user.model');
+const { PLAN_TIERS, TIER_RANK } = require('../models/plan.model');
+const notificationService = require('./notification.service');
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
+const { convertToWebp } = require('../utils/image.util');
+const { assertRealFileType, deleteTempFile } = require('../utils/uploadGuard.util');
+const { escapeRegex } = require('../utils/searchUtil');
+
+// Real (magic-byte-detected) mime values only — never the client-declared one.
+const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp'];
 
 // ── Status lifecycle ─────────────────────────────────────────────────────────
 
@@ -24,6 +34,7 @@ const ALLOWED_JOB_FIELDS = [
   'department',
   'rank',
   'designation',
+  'category',
   'vesselType',
   'location',
   'employmentType',
@@ -42,8 +53,6 @@ const pick = (source, fields) =>
     if (Object.prototype.hasOwnProperty.call(source, field)) acc[field] = source[field];
     return acc;
   }, {});
-
-const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * Reshapes a job document for API responses: nests company info as
@@ -86,6 +95,7 @@ const listPublicJobs = async (query) => {
   const filter = { status: 'published' };
 
   if (query.department) filter.department = parseCsvFilter(query.department);
+  if (query.category) filter.category = parseCsvFilter(query.category);
   if (query.vesselType) filter.vesselType = parseCsvFilter(query.vesselType);
   if (query.employmentType) filter.employmentType = query.employmentType;
   if (query.rank) filter.rank = new RegExp(`^${escapeRegex(query.rank.trim())}$`, 'i');
@@ -116,6 +126,33 @@ const getPublicJobById = async (id) => {
   return job ? presentJob(job) : null;
 };
 
+// "Job Alerts": published jobs this user's active subscription tier
+// qualifies for (same isTierSufficient rule applying is gated by — a job
+// tagged minimumTier X is visible here to X and every tier above it). A user
+// with no active subscription has no qualifying tier, so the feed is
+// deliberately empty for them rather than falling back to "everything" —
+// this feed is explicitly "jobs regarding my plan", not the general listing.
+const listJobAlertsForUser = async (userId, query) => {
+  const user = await User.findById(userId).select('subscriptionStatus subscriptionTier').lean();
+  if (!user || user.subscriptionStatus !== 'active' || !user.subscriptionTier) {
+    return { jobs: [], page: 1, limit: 20, total: 0 };
+  }
+
+  const { page, limit, skip } = parsePagination(query);
+  const myRank = TIER_RANK[user.subscriptionTier] || TIER_RANK.start;
+  const eligibleTiers = PLAN_TIERS.filter((tier) => TIER_RANK[tier] <= myRank);
+
+  const filter = { status: 'published', minimumTier: { $in: eligibleTiers } };
+  if (query.search) filter.$text = { $search: query.search };
+
+  const [jobs, total] = await Promise.all([
+    Job.find(filter).sort({ publishedAt: -1 }).skip(skip).limit(limit).lean(),
+    Job.countDocuments(filter),
+  ]);
+
+  return { jobs: jobs.map(presentJob), page, limit, total };
+};
+
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 const listAdminJobs = async (query) => {
@@ -124,6 +161,7 @@ const listAdminJobs = async (query) => {
 
   if (query.status) filter.status = query.status;
   if (query.department) filter.department = parseCsvFilter(query.department);
+  if (query.category) filter.category = parseCsvFilter(query.category);
   if (query.vesselType) filter.vesselType = parseCsvFilter(query.vesselType);
   if (query.rank) filter.rank = new RegExp(`^${escapeRegex(query.rank.trim())}$`, 'i');
   if (query.country) filter['location.country'] = new RegExp(`^${escapeRegex(query.country.trim())}$`, 'i');
@@ -154,6 +192,15 @@ const createJob = async (data, userId) => {
     publishedAt: status === 'published' ? new Date() : undefined,
     createdBy: userId,
   });
+
+  // Fire-and-forget, same non-blocking contract as pushService.sendToUser —
+  // notifying every tier-eligible subscriber must never delay the admin's
+  // response, and a failure here must never fail job creation itself
+  // (notifyEligibleUsersForJob already never throws).
+  if (status === 'published') {
+    notificationService.notifyEligibleUsersForJob(job);
+  }
+
   return presentJob(job.toObject());
 };
 
@@ -189,6 +236,12 @@ const updateStatus = async (id, nextStatus, userId) => {
   job.updatedBy = userId;
   await job.save();
 
+  // Covers the admin's other real publish path (create as draft, publish
+  // later) — same fire-and-forget contract as createJob's call above.
+  if (nextStatus === 'published') {
+    notificationService.notifyEligibleUsersForJob(job);
+  }
+
   return presentJob(job.toObject());
 };
 
@@ -217,14 +270,38 @@ const deleteJob = async (id) => {
   return presentJob(job.toObject());
 };
 
+// ── Image upload ──────────────────────────────────────────────────────────────
+
+/**
+ * Converts an uploaded job image to WebP (capped at 1200×900, preserving
+ * aspect ratio) and moves it into uploads/company/. Returns the relative path
+ * to store as `companyLogoUrl` — the caller (controller) turns this into an
+ * absolute URL using the request's own origin.
+ */
+const uploadJobImage = async (file) => {
+  assertRealFileType(file.path, IMAGE_MIMES);
+
+  const outputFilename = `${path.parse(file.filename).name}.webp`;
+  const outputPath = path.join(path.dirname(file.path), '..', 'company', outputFilename);
+
+  await convertToWebp(file.path, outputPath, {
+    resize: { width: 1200, height: 900, fit: 'inside', withoutEnlargement: true },
+  });
+  deleteTempFile(file.path);
+
+  return `uploads/company/${outputFilename}`;
+};
+
 module.exports = {
   listPublicJobs,
   getPublicJobById,
+  listJobAlertsForUser,
   listAdminJobs,
   getAdminJobById,
   createJob,
   updateJob,
   updateStatus,
   deleteJob,
+  uploadJobImage,
   presentJob,
 };

@@ -2,14 +2,13 @@
 
 const { body, query, param } = require('express-validator');
 const {
-  JOB_DEPARTMENTS,
   JOB_DESIGNATIONS,
-  JOB_VESSEL_TYPES,
   JOB_EMPLOYMENT_TYPES,
   JOB_STATUSES,
 } = require('../models/job.model');
 const { PLAN_TIERS } = require('../models/plan.model');
 const DocumentType = require('../models/documentType.model');
+const JobTaxonomy = require('../models/jobTaxonomy.model');
 
 // ── Reusable helpers ──────────────────────────────────────────────────────────
 
@@ -54,10 +53,23 @@ const sharedFieldRules = (required) => {
     notEmpty(body('companyName').trim()).isLength({ max: 150 }).withMessage('Company name must not exceed 150 characters.'),
     optionalString('companyLogoUrl', 500),
 
-    notEmpty(body('department')).isIn(JOB_DEPARTMENTS).withMessage('Invalid department.'),
+    notEmpty(body('department')).bail().custom(async (value) => {
+      const taxonomy = await JobTaxonomy.findOne({ type: 'department', name: value, isActive: true }).lean();
+      if (!taxonomy) throw new Error('Invalid department.');
+      return true;
+    }),
     notEmpty(body('rank').trim()).isLength({ max: 100 }).withMessage('Rank must not exceed 100 characters.'),
     body('designation').optional({ nullable: true, checkFalsy: true }).isIn(JOB_DESIGNATIONS).withMessage('Invalid designation.'),
-    notEmpty(body('vesselType')).isIn(JOB_VESSEL_TYPES).withMessage('Invalid vessel type.'),
+    body('category').optional({ nullable: true, checkFalsy: true }).bail().custom(async (value) => {
+      const taxonomy = await JobTaxonomy.findOne({ type: 'category', name: value, isActive: true }).lean();
+      if (!taxonomy) throw new Error('Invalid category.');
+      return true;
+    }),
+    notEmpty(body('vesselType')).bail().custom(async (value) => {
+      const taxonomy = await JobTaxonomy.findOne({ type: 'vesselType', name: value, isActive: true }).lean();
+      if (!taxonomy) throw new Error('Invalid vessel type.');
+      return true;
+    }),
 
     notEmpty(body('location.country').trim()).isLength({ max: 100 }).withMessage('Location country must not exceed 100 characters.'),
     optionalString('location.city', 100),
@@ -129,12 +141,17 @@ const minMaxSalaryCheck = query('maxSalary')
     return true;
   });
 
-// Accepts either a single enum value or a comma-separated list of them —
-// lets the mobile Filter modal's multi-select chips (Department, Vessel Type)
-// map directly onto one query param each.
-const csvIn = (allowed) => (value) => {
+// Accepts a comma-separated list of values, letting the mobile Filter
+// modal's multi-select chips (Department, Vessel Type) map directly onto one
+// query param each. Shape-only (not checked against JobTaxonomy) — an
+// unrecognized filter value just yields zero matching jobs, which is not a
+// data-integrity risk, and this is the highest-traffic public endpoint in
+// the app, so a per-request DB round-trip here isn't worth it (unlike the
+// low-frequency job create/update payload, which IS validated against
+// JobTaxonomy above).
+const csvShape = (maxLen = 100) => (value) => {
   const tokens = String(value).split(',').map((v) => v.trim()).filter(Boolean);
-  if (!tokens.length || !tokens.every((t) => allowed.includes(t))) {
+  if (!tokens.length || !tokens.every((t) => t.length <= maxLen)) {
     throw new Error('Invalid value.');
   }
   return true;
@@ -144,9 +161,10 @@ const listJobsQuery = [
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 50 }),
   query('search').optional().trim().isLength({ max: 200 }),
-  query('department').optional().custom(csvIn(JOB_DEPARTMENTS)),
+  query('department').optional().custom(csvShape()),
+  query('category').optional().custom(csvShape()),
   query('rank').optional().trim().isLength({ max: 100 }),
-  query('vesselType').optional().custom(csvIn(JOB_VESSEL_TYPES)),
+  query('vesselType').optional().custom(csvShape()),
   query('country').optional().trim().isLength({ max: 100 }),
   query('employmentType').optional().isIn(JOB_EMPLOYMENT_TYPES),
   query('minSalary').optional().isFloat({ min: 0 }),

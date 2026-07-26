@@ -29,4 +29,16 @@ const getJobById = asyncHandler(async (req, res) => {
   return successResponse(res, AUTH_MESSAGES.JOB_FETCHED, { job });
 });
 
-module.exports = { listJobs, getJobById };
+const listJobAlerts = asyncHandler(async (req, res) => {
+  const { jobs, page, limit, total } = await jobService.listJobAlertsForUser(req.user._id, req.query);
+
+  return successResponse(
+    res,
+    AUTH_MESSAGES.JOBS_FETCHED,
+    { jobs },
+    HTTP_STATUS.OK,
+    paginationMeta(page, limit, total)
+  );
+});
+
+module.exports = { listJobs, getJobById, listJobAlerts };

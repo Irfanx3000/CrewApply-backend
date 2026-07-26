@@ -7,7 +7,7 @@ const DocumentType = require('../models/documentType.model');
 const User = require('../models/user.model');
 const { saveFile } = require('./storage.service');
 const { convertToWebp } = require('../utils/image.util');
-const { detectFileMimeType } = require('../utils/fileSignature.util');
+const { assertRealFileType, deleteTempFile } = require('../utils/uploadGuard.util');
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
@@ -15,28 +15,6 @@ const { AUTH_MESSAGES } = require('../constants/messages');
 // Real (magic-byte-detected) mime values only — never the client-declared one.
 const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp'];
 const PDF_MIME = 'application/pdf';
-
-const deleteTempFile = (tempPath) => {
-  if (tempPath && fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-};
-
-/**
- * Verifies a saved file's REAL content type (via magic bytes) against an
- * allow-list, ignoring the client-declared Content-Type/extension entirely.
- * Deletes the temp file and throws a 400 on any mismatch or unrecognized file.
- *
- * @param {string} filePath
- * @param {string[]} allowedMimes
- * @returns {string} the detected mime type (only returned on success)
- */
-const assertRealFileType = (filePath, allowedMimes) => {
-  const detected = detectFileMimeType(filePath);
-  if (!detected || !allowedMimes.includes(detected)) {
-    deleteTempFile(filePath);
-    throw new AppError(AUTH_MESSAGES.INVALID_FILE_TYPE, HTTP_STATUS.BAD_REQUEST, 'INVALID_FILE_TYPE');
-  }
-  return detected;
-};
 
 // ── Profile completion ────────────────────────────────────────────────────────
 
@@ -335,6 +313,11 @@ const uploadDocumentGeneric = async (userId, file, category, metadataRaw) => {
   return Document.create({
     user: userId,
     category: docType.key,
+    // Document.type is the schema's own sub-type field (e.g. certificate
+    // name) — lifted out of the freeform metadata blob when the caller sends
+    // one, so callers like getVerifiedCertificates() that read doc.type
+    // directly (not doc.metadata.type) see it.
+    type: metadata.type || null,
     originalName: file.originalname,
     storedName,
     path: relativePath,

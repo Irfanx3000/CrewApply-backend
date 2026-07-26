@@ -1,6 +1,7 @@
 'use strict';
 
 const authService = require('../services/auth.service');
+const adminAccountService = require('../services/adminAccount.service');
 const notificationService = require('../services/notification.service');
 const asyncHandler = require('../utils/asyncHandler');
 const { successResponse } = require('../utils/apiResponse');
@@ -139,6 +140,19 @@ const changePassword = asyncHandler(async (req, res) => {
   return successResponse(res, AUTH_MESSAGES.PASSWORD_CHANGED);
 });
 
+// ── POST /auth/accept-admin-invite ────────────────────────────────────────────
+// Public — the invited admin has no session yet. Delegates to
+// adminAccountService, which also backs the admin-only invite/list endpoints
+// under /admin/admin-accounts (see adminAccount.controller.js).
+
+const acceptAdminInvite = asyncHandler(async (req, res) => {
+  const { email, otp, name, password } = req.body;
+
+  const result = await adminAccountService.acceptAdminInvite({ email, otp, name, password }, req);
+
+  return successResponse(res, AUTH_MESSAGES.ADMIN_INVITE_ACCEPTED, result);
+});
+
 // ── POST /auth/google ─────────────────────────────────────────────────────────
 
 const googleAuth = asyncHandler(async (req, res) => {
@@ -164,4 +178,5 @@ module.exports = {
   resetPassword,
   changePassword,
   googleAuth,
+  acceptAdminInvite,
 };

@@ -3,16 +3,6 @@
 const mongoose = require('mongoose');
 const { PLAN_TIERS } = require('./plan.model');
 
-// Mirrors CrewApply/src/constants/maritime.constants.js DEPARTMENTS — keep in sync.
-const JOB_DEPARTMENTS = Object.freeze([
-  'Deck',
-  'Engine',
-  'Electrical',
-  'Catering / Galley',
-  'Hotel / Hospitality',
-  'Medical',
-]);
-
 // Mirrors CrewApply/src/constants/maritime.constants.js DESIGNATIONS — keep in sync.
 const JOB_DESIGNATIONS = Object.freeze([
   'Trainee / Cadet',
@@ -22,20 +12,6 @@ const JOB_DESIGNATIONS = Object.freeze([
   'Senior Officer',
   'Head of Department',
   'Management',
-]);
-
-// Mirrors CrewApply/src/constants/maritime.constants.js VESSEL_TYPES — keep in sync.
-const JOB_VESSEL_TYPES = Object.freeze([
-  'Cruise',
-  'Container',
-  'Tanker',
-  'Bulk Carrier',
-  'Offshore',
-  'LNG Carrier',
-  'LPG Carrier',
-  'Chemical Tanker',
-  'Ro-Ro',
-  'Tug',
 ]);
 
 const JOB_EMPLOYMENT_TYPES = Object.freeze([
@@ -109,10 +85,15 @@ const jobSchema = new mongoose.Schema(
       default: null,
     },
 
+    // Validated dynamically against the admin-manageable JobTaxonomy
+    // collection at the request layer (see job.validation.js), same pattern
+    // as requiredDocuments below — not a fixed schema enum, since the set of
+    // valid departments is now admin-configurable.
     department: {
       type: String,
       required: [true, 'Department is required.'],
-      enum: { values: JOB_DEPARTMENTS, message: 'Invalid department.' },
+      trim: true,
+      maxlength: [100, 'Department must not exceed 100 characters.'],
     },
 
     rank: {
@@ -128,10 +109,26 @@ const jobSchema = new mongoose.Schema(
       default: null,
     },
 
+    // Which admin-managed Category this job belongs to (the taxonomy behind
+    // the mobile app's home-screen "Categories" section — see
+    // JobTaxonomy.JOB_TAXONOMY_TYPES's 'category'). Optional and nullable,
+    // same as `designation` above: existing jobs predate this field, so it
+    // isn't required at the schema level (the admin Job form enforces it for
+    // new jobs). Validated dynamically against JobTaxonomy — see
+    // `department` above.
+    category: {
+      type: String,
+      trim: true,
+      maxlength: [100, 'Category must not exceed 100 characters.'],
+      default: null,
+    },
+
+    // Validated dynamically against JobTaxonomy — see `department` above.
     vesselType: {
       type: String,
       required: [true, 'Vessel type is required.'],
-      enum: { values: JOB_VESSEL_TYPES, message: 'Invalid vessel type.' },
+      trim: true,
+      maxlength: [100, 'Vessel type must not exceed 100 characters.'],
     },
 
     location: {
@@ -225,6 +222,7 @@ jobSchema.index({ status: 1, publishedAt: -1 });
 jobSchema.index({ status: 1, featured: -1, publishedAt: -1 });
 // Equality filters exposed by the mobile Jobs/Filter UI.
 jobSchema.index({ status: 1, department: 1 });
+jobSchema.index({ status: 1, category: 1 });
 jobSchema.index({ status: 1, rank: 1 });
 jobSchema.index({ status: 1, vesselType: 1 });
 jobSchema.index({ status: 1, 'location.country': 1 });
@@ -240,8 +238,6 @@ jobSchema.index({
 });
 
 module.exports = mongoose.model('Job', jobSchema);
-module.exports.JOB_DEPARTMENTS = JOB_DEPARTMENTS;
 module.exports.JOB_DESIGNATIONS = JOB_DESIGNATIONS;
-module.exports.JOB_VESSEL_TYPES = JOB_VESSEL_TYPES;
 module.exports.JOB_EMPLOYMENT_TYPES = JOB_EMPLOYMENT_TYPES;
 module.exports.JOB_STATUSES = JOB_STATUSES;

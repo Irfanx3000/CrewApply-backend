@@ -122,6 +122,45 @@ const genericDocumentUpload = multer({
   ),
 });
 
+/**
+ * Job listing image (company logo / banner) — single file, image only, 5 MB.
+ * Sharp converts to WebP, capped at 1200×900 preserving aspect ratio, in the service.
+ */
+const jobImageUpload = multer({
+  storage: tempStorage,
+  limits: { fileSize: 5 * MB },
+  fileFilter: makeFilter(
+    ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'],
+    'job image'
+  ),
+});
+
+/**
+ * Promotional banner image — single file, image only, 5 MB.
+ * Sharp converts to WebP in the service, preserving aspect ratio.
+ */
+const bannerImageUpload = multer({
+  storage: tempStorage,
+  limits: { fileSize: 5 * MB },
+  fileFilter: makeFilter(
+    ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'],
+    'banner image'
+  ),
+});
+
+/**
+ * Job category icon — single file, image only, 2 MB (icons are small).
+ * Sharp converts to WebP, capped at 256×256, in the service.
+ */
+const categoryIconUpload = multer({
+  storage: tempStorage,
+  limits: { fileSize: 2 * MB },
+  fileFilter: makeFilter(
+    ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'],
+    'category icon'
+  ),
+});
+
 module.exports = {
   profileUpload,
   resumeUpload,
@@ -129,4 +168,7 @@ module.exports = {
   certificateUpload,
   visaUpload,
   genericDocumentUpload,
+  jobImageUpload,
+  bannerImageUpload,
+  categoryIconUpload,
 };

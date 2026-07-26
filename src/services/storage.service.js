@@ -8,7 +8,7 @@ const path = require('path');
 const UPLOADS_ROOT = path.join(__dirname, '..', 'uploads');
 
 // Ensure the standard subdirectories exist so multer/sharp can always write.
-for (const dir of ['temp', 'profile', 'resumes', 'certificates', 'company', 'documents']) {
+for (const dir of ['temp', 'profile', 'resumes', 'certificates', 'company', 'documents', 'banners', 'category-icons']) {
   const full = path.join(UPLOADS_ROOT, dir);
   if (!fs.existsSync(full)) fs.mkdirSync(full, { recursive: true });
 }
@@ -37,6 +37,29 @@ const saveFile = (tmpPath, destDir, filename) => {
 };
 
 /**
+ * Writes an in-memory buffer directly to its final destination — for content
+ * produced programmatically (e.g. a generated resume PDF) rather than
+ * uploaded via multer, so there's no temp file to move.
+ *
+ * @param {Buffer} buffer
+ * @param {string} destDir   - Subdirectory inside uploads/ (e.g. 'resumes')
+ * @param {string} filename  - Final filename (UUID.ext)
+ * @returns {string}         - Relative path: uploads/resumes/UUID.ext
+ */
+const saveBuffer = (buffer, destDir, filename) => {
+  const finalDir = path.join(UPLOADS_ROOT, destDir);
+
+  if (!fs.existsSync(finalDir)) {
+    fs.mkdirSync(finalDir, { recursive: true });
+  }
+
+  const finalPath = path.join(finalDir, filename);
+  fs.writeFileSync(finalPath, buffer);
+
+  return `uploads/${destDir}/${filename}`.replace(/\\/g, '/');
+};
+
+/**
  * Deletes a file given its relative path (as stored in the DB).
  * Silently succeeds if the file does not exist.
  *
@@ -60,4 +83,4 @@ const fileExists = (relativePath) => {
   return fs.existsSync(abs);
 };
 
-module.exports = { saveFile, deleteFile, fileExists, UPLOADS_ROOT };
+module.exports = { saveFile, saveBuffer, deleteFile, fileExists, UPLOADS_ROOT };

@@ -17,7 +17,7 @@ const mongoose = require('mongoose');
 const Plan = require('../models/plan.model');
 
 const FEATURES = {
-  start: ['Apply to 10 jobs / month', 'Access to basic cruise jobs', 'Job alerts (Email)', 'Standard application support'],
+  start: ['Apply to 10 jobs / month', 'Access to basic cruise jobs', 'Job alerts (App)', 'Standard application support'],
   premium: ['Apply to 20 jobs/month', 'Access to premium cruise jobs', 'Job alerts (Email + App)', 'Priority application support'],
   elite: ['Unlimited job applications', 'Job alerts (All Channels)', 'Priority support (WhatsApp)', 'Early access to new jobs'],
 };

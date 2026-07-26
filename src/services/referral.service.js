@@ -13,13 +13,12 @@ const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
 const { AUDIT_EVENTS } = require('../constants/audit');
+const { escapeRegex } = require('../utils/searchUtil');
 
 const ctxOf = (req) => ({
   ipAddress: req?.ip || null,
   userAgent: req?.get?.('user-agent') || null,
 });
-
-const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const parsePagination = (query) => {
   const page = Math.max(parseInt(query.page, 10) || 1, 1);

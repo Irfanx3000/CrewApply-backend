@@ -5,6 +5,8 @@ const mongoose = require('mongoose');
 // Lifecycle of a single payment/order.
 const PAYMENT_STATUSES = Object.freeze(['created', 'paid', 'failed', 'refunded']);
 
+const PAYMENT_TYPES = Object.freeze(['subscription', 'consultancy']);
+
 const paymentSchema = new mongoose.Schema(
   {
     user: {
@@ -12,16 +14,38 @@ const paymentSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
     },
+
+    // Discriminates which downstream resource this order pays for — added
+    // alongside the Consultancy Booking feature. Subscription remains the
+    // default so every pre-existing Payment document (written before this
+    // field existed) reads back as 'subscription' via the schema default.
+    type: {
+      type: String,
+      enum: { values: PAYMENT_TYPES, message: 'Invalid payment type.' },
+      default: 'subscription',
+    },
+
+    // Subscription-only fields below — conditionally required so a
+    // type:'consultancy' payment doesn't need a plan/tier/billingCycle.
     plan: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Plan',
-      required: true,
+      required: function () { return this.type === 'subscription'; },
     },
     subscription: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Subscription',
       default: null,
     },
+    tier: { type: String, required: function () { return this.type === 'subscription'; } },
+    billingCycle: { type: String, required: function () { return this.type === 'subscription'; } },
+
+    // Consultancy-only fields below — null for type:'subscription'.
+    consultancySlot: { type: mongoose.Schema.Types.ObjectId, ref: 'ConsultancySlot', default: null },
+    consultancyTopic: { type: String, default: null },
+    consultancyRequirement: { type: String, default: null },
+    consultancyResumeDocument: { type: mongoose.Schema.Types.ObjectId, ref: 'Document', default: null },
+    consultancyBooking: { type: mongoose.Schema.Types.ObjectId, ref: 'ConsultancyBooking', default: null },
 
     // Snapshot of what was charged (server-computed) — never trusted from the client.
     // `amount` is the actual chargeable value AFTER any wallet credit was applied,
@@ -31,8 +55,6 @@ const paymentSchema = new mongoose.Schema(
     amountBeforeCredit: { type: Number, default: 0 }, // paise, 0 when no wallet credit was applied
     walletApplied: { type: Number, default: 0 }, // paise debited from the buyer's wallet for this order
     currency: { type: String, default: 'INR' },
-    tier: { type: String, required: true },
-    billingCycle: { type: String, required: true },
 
     status: {
       type: String,
@@ -70,3 +92,4 @@ paymentSchema.index(
 
 module.exports = mongoose.model('Payment', paymentSchema);
 module.exports.PAYMENT_STATUSES = PAYMENT_STATUSES;
+module.exports.PAYMENT_TYPES = PAYMENT_TYPES;

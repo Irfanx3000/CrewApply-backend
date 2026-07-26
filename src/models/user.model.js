@@ -75,10 +75,15 @@ const userSchema = new mongoose.Schema(
     },
 
     // ── Phone ──────────────────────────────────────────────────────────────────
+    // No `default` here, deliberately — same reasoning as referralCode below:
+    // a sparse unique index only skips documents where the field is ABSENT,
+    // not documents where it's explicitly null. `default: null` would stamp
+    // an explicit null on every phone-less account (Google OAuth signups,
+    // invited admins), and the second such account would collide on this
+    // unique index. Leave it genuinely unset until the user actually has one.
     phone: {
       type: String,
       trim: true,
-      default: null,
     },
 
     phoneVerified: {
@@ -314,6 +319,9 @@ const userSchema = new mongoose.Schema(
 userSchema.index({ email: 1, isActive: 1 });
 // Sparse: allows multiple null values; unique: one account per verified phone
 userSchema.index({ phone: 1 }, { unique: true, sparse: true });
+// Admin universal search — phone stays regex-matched (see search.service.js),
+// digits-only values aren't meaningfully text-indexable.
+userSchema.index({ name: 'text', email: 'text' });
 
 // ── Virtuals ──────────────────────────────────────────────────────────────────
 

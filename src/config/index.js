@@ -25,6 +25,13 @@ const config = {
     url: process.env.CLIENT_URL || 'http://localhost:3000',
   },
 
+  // The CrewApply-admin web app — a separate deployment from the mobile
+  // app's own client.url above. Used to link the admin-invite email to the
+  // Accept Invite screen there.
+  adminClient: {
+    url: process.env.ADMIN_CLIENT_URL || 'http://localhost:5173',
+  },
+
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID,
   },
@@ -56,6 +63,15 @@ const config = {
   // it; push sends become silent no-ops until configured (see push.service.js).
   firebase: {
     serviceAccountBase64: process.env.FIREBASE_SERVICE_ACCOUNT_BASE64,
+  },
+
+  // Resend (job-alert emails for Premium/Elite subscribers — Crew Start is
+  // app/push-only, see notification.service.js#notifyEligibleUsersForJob).
+  // NOT in validateEnv's required[] — the app boots without it; email sends
+  // become silent no-ops until configured (see resend.service.js).
+  resend: {
+    apiKey: process.env.RESEND_API_KEY,
+    fromEmail: process.env.RESEND_FROM_EMAIL || 'CrewApply <alerts@crewapply.com>',
   },
 
   security: {
@@ -98,6 +114,12 @@ const config = {
     general: {
       windowMs: 15 * 60 * 1000,
       max: 300,
+    },
+    // Universal search fans out into several parallel Mongo queries per
+    // request — tighter, shorter-window cap than generalLimiter alone.
+    search: {
+      windowMs: 60 * 1000,
+      max: 30,
     },
   },
 

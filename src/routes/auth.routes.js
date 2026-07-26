@@ -41,4 +41,8 @@ router.post('/change-password',     authenticate,         validate(authValidatio
 // ── Google OAuth ───────────────────────────────────────────────────────────────
 router.post('/google',              authLimiter,          validate(authValidation.googleAuth),          authController.googleAuth);
 
+// ── Admin invite acceptance (public — invited admin has no session yet) ──────
+// The invite itself is admin-only (POST /admin/admin-accounts/invite).
+router.post('/accept-admin-invite', otpLimiter,           validate(authValidation.acceptAdminInvite),   authController.acceptAdminInvite);
+
 module.exports = router;

@@ -7,6 +7,7 @@ const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
 const { AUDIT_EVENTS } = require('../constants/audit');
 const { ROLES } = require('../constants/roles');
+const { escapeRegex } = require('../utils/searchUtil');
 
 // Admin-only management of app users (seafarers/recruiters who onboarded via
 // the mobile app) — never admin accounts, guarded in every write below.
@@ -17,8 +18,6 @@ const ctxOf = (req) => ({
   ipAddress: req?.ip || null,
   userAgent: req?.get?.('user-agent') || null,
 });
-
-const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const parsePagination = (query) => {
   const page = Math.max(parseInt(query.page, 10) || 1, 1);

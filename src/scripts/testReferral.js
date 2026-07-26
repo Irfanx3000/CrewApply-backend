@@ -25,6 +25,7 @@ const Referral = require('../models/referral.model');
 const WalletTransaction = require('../models/walletTransaction.model');
 const ReferralSetting = require('../models/referralSetting.model');
 const subscriptionService = require('../services/subscription.service');
+const paymentService = require('../services/payment.service');
 const referralService = require('../services/referral.service');
 
 const fakeReq = { ip: '127.0.0.1', get: () => 'test-script' };
@@ -40,7 +41,7 @@ const payViaWebhook = async (orderId, amount) => {
   };
   const raw = Buffer.from(JSON.stringify(event));
   const signature = crypto.createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET).update(raw).digest('hex');
-  await subscriptionService.handleWebhook({ rawBody: raw, signature }, fakeReq);
+  await paymentService.handleWebhook({ rawBody: raw, signature }, fakeReq);
 };
 
 const freshUser = async (u) => User.findById(u._id);

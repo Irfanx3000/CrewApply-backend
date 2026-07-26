@@ -23,13 +23,18 @@ const getUnreadCount = asyncHandler(async (req, res) => {
   return successResponse(res, AUTH_MESSAGES.UNREAD_COUNT_FETCHED, { count });
 });
 
+const getUnreadCountsByType = asyncHandler(async (req, res) => {
+  const counts = await notificationService.getUnreadCountsByType(req.user._id);
+  return successResponse(res, AUTH_MESSAGES.UNREAD_COUNTS_BY_TYPE_FETCHED, { counts });
+});
+
 const markAsRead = asyncHandler(async (req, res) => {
   const notification = await notificationService.markRead(req.user._id, req.params.id);
   return successResponse(res, AUTH_MESSAGES.NOTIFICATION_MARKED_READ, { notification });
 });
 
 const markAllAsRead = asyncHandler(async (req, res) => {
-  await notificationService.markAllRead(req.user._id);
+  await notificationService.markAllRead(req.user._id, req.query);
   return successResponse(res, AUTH_MESSAGES.ALL_NOTIFICATIONS_MARKED_READ);
 });
 
@@ -46,6 +51,7 @@ const deregisterDeviceToken = asyncHandler(async (req, res) => {
 module.exports = {
   listNotifications,
   getUnreadCount,
+  getUnreadCountsByType,
   markAsRead,
   markAllAsRead,
   registerDeviceToken,

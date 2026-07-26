@@ -37,4 +37,22 @@ const setOverride = async (percent, adminId, req) => {
   return setting.yearlyDiscountOverridePercent;
 };
 
-module.exports = { getOverride, setOverride };
+// Region-priced flat fee for booking a Consultancy session — mirrors
+// getOverride/setOverride's singleton-doc shape exactly.
+const getConsultancyFee = async () => {
+  const setting = await getOrCreate();
+  return setting.consultancyFee;
+};
+
+const setConsultancyFee = async ({ india, global }, adminId, req) => {
+  const setting = await getOrCreate();
+  if (india?.amount != null) setting.consultancyFee.india.amount = india.amount;
+  if (global?.amount != null) setting.consultancyFee.global.amount = global.amount;
+  await setting.save();
+  auditService
+    .log({ event: AUDIT_EVENTS.CONSULTANCY_FEE_UPDATED, userId: adminId, ...ctxOf(req), metadata: { consultancyFee: setting.consultancyFee } })
+    .catch(() => {});
+  return setting.consultancyFee;
+};
+
+module.exports = { getOverride, setOverride, getConsultancyFee, setConsultancyFee };

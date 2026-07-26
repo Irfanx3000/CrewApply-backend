@@ -23,6 +23,8 @@ const listQuery = [
 
 const unreadCountQuery = [typeFilter];
 
+const markAllReadQuery = [typeFilter];
+
 const idParam = [
   param('id').isMongoId().withMessage('Invalid notification ID.'),
 ];
@@ -39,6 +41,7 @@ const deregisterDeviceToken = [
 module.exports = {
   listQuery,
   unreadCountQuery,
+  markAllReadQuery,
   idParam,
   registerDeviceToken,
   deregisterDeviceToken,

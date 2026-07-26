@@ -6,6 +6,7 @@ const Payment = require('../models/payment.model');
 const Subscription = require('../models/subscription.model');
 const User = require('../models/user.model');
 const razorpayService = require('./razorpay.service');
+const paymentService = require('./payment.service');
 const auditService = require('./audit.service');
 const notificationService = require('./notification.service');
 const pricingSettingService = require('./pricingSetting.service');
@@ -18,6 +19,7 @@ const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
 const { AUDIT_EVENTS } = require('../constants/audit');
 const { CURRENCY_BY_REGION, resolveRegion } = require('../utils/pricingRegion.util');
+const { buildRegex } = require('../utils/searchUtil');
 
 // An open ('created') order older than this is treated as abandoned and released,
 // so a user who bailed out of an earlier checkout isn't locked out forever.
@@ -124,7 +126,7 @@ const createOrder = async ({ user, tier, billingCycle, applyWalletCredit = true 
   //    Only Razorpay knows which happened, so we ask it directly.
   const openPayment = await Payment.findOne({ user: user._id, status: 'created' });
   if (openPayment) {
-    const { paid } = await reconcilePendingOrder(openPayment, req);
+    const { paid } = await paymentService.reconcilePendingOrder(openPayment, req);
     if (paid) {
       // A real payment went through — we've now activated it. Refuse a 2nd charge.
       throw new AppError(
@@ -187,6 +189,7 @@ const createOrder = async ({ user, tier, billingCycle, applyWalletCredit = true 
   try {
     payment = await Payment.create({
       user: user._id,
+      type: 'subscription',
       plan: plan._id,
       amount: chargeable,
       amountBeforeCredit: walletApplied > 0 ? amount : 0,
@@ -320,42 +323,6 @@ const activate = async (payment, { gatewayPaymentId = null, signature = null } =
   return subscription;
 };
 
-// ── Reconcile a pending order against Razorpay ────────────────────────────────
-//
-// Given a locally-'created' order, ask Razorpay whether it was actually paid.
-//  • Not paid (user cancelled / abandoned)  → { paid:false }  (caller may release it)
-//  • Paid (confirmation just never reached us) → activate it → { paid:true }
-// This is the guard that stops a user from being charged twice when a real payment's
-// verify/webhook confirmation was delayed or lost.
-const reconcilePendingOrder = async (payment, req) => {
-  let order;
-  try {
-    order = await razorpayService.fetchOrder(payment.gatewayOrderId);
-  } catch {
-    // Can't reach the gateway — fail safe by treating it as NOT paid (don't lock
-    // the user out; the webhook remains the authoritative activation path).
-    return { paid: false };
-  }
-
-  const isPaid =
-    order &&
-    (order.status === 'paid' || Number(order.amount_paid || 0) >= payment.amount);
-  if (!isPaid) return { paid: false };
-
-  // Find the captured payment id to record on activation (best-effort).
-  let capturedId = null;
-  try {
-    const list = await razorpayService.fetchOrderPayments(payment.gatewayOrderId);
-    const items = (list && list.items) || [];
-    capturedId = (items.find((p) => p.status === 'captured') || items[0] || {}).id || null;
-  } catch {
-    /* non-fatal — activation doesn't require the payment id */
-  }
-
-  await activate(payment, { gatewayPaymentId: capturedId, signature: null }, req);
-  return { paid: true };
-};
-
 // ── Client verify path ────────────────────────────────────────────────────────
 
 const verifyPayment = async ({ user, orderId, paymentId, signature }, req) => {
@@ -375,48 +342,6 @@ const verifyPayment = async ({ user, orderId, paymentId, signature }, req) => {
 
   await activate(payment, { gatewayPaymentId: paymentId, signature }, req);
   return getMySubscription(user);
-};
-
-// ── Webhook path (authoritative) ──────────────────────────────────────────────
-
-const handleWebhook = async ({ rawBody, signature }, req) => {
-  if (!razorpayService.verifyWebhookSignature(rawBody, signature)) {
-    throw new AppError(AUTH_MESSAGES.WEBHOOK_INVALID_SIGNATURE, HTTP_STATUS.UNAUTHORIZED, 'INVALID_WEBHOOK_SIGNATURE');
-  }
-
-  let event;
-  try {
-    const text = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody;
-    event = JSON.parse(text);
-  } catch {
-    throw new AppError('Invalid webhook payload.', HTTP_STATUS.BAD_REQUEST, 'INVALID_PAYLOAD');
-  }
-
-  audit(AUDIT_EVENTS.WEBHOOK_RECEIVED, null, req, { event: event.event });
-
-  const paymentEntity = event?.payload?.payment?.entity;
-  const orderEntity = event?.payload?.order?.entity;
-  const orderId = paymentEntity?.order_id || orderEntity?.id;
-
-  if (!orderId) return { received: true };
-
-  const payment = await Payment.findOne({ gatewayOrderId: orderId });
-  if (!payment) return { received: true }; // not one of ours — ignore
-
-  if (event.event === 'payment.captured' || event.event === 'order.paid') {
-    // Defense in depth: the amount actually paid must match what we recorded.
-    const paidAmount = paymentEntity?.amount ?? orderEntity?.amount;
-    if (paidAmount != null && Number(paidAmount) !== payment.amount) {
-      audit(AUDIT_EVENTS.PAYMENT_FAILED, payment.user, req, { orderId, reason: 'amount_mismatch', paidAmount });
-      return { received: true };
-    }
-    await activate(payment, { gatewayPaymentId: paymentEntity?.id || null, signature: null }, req);
-  } else if (event.event === 'payment.failed') {
-    await Payment.updateOne({ _id: payment._id, status: 'created' }, { $set: { status: 'failed' } });
-    audit(AUDIT_EVENTS.PAYMENT_FAILED, payment.user, req, { orderId });
-  }
-
-  return { received: true };
 };
 
 // ── Current subscription (with lazy expiry) ───────────────────────────────────
@@ -512,11 +437,142 @@ const getAdminAnalytics = async () => {
   };
 };
 
+// ── Admin payments list (Payments page) ───────────────────────────────────────
+
+const parsePagination = (query) => {
+  const page = Math.max(parseInt(query.page, 10) || 1, 1);
+  const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 50);
+  return { page, limit, skip: (page - 1) * limit };
+};
+
+// Turns "paid" into "paid" and "paid,failed" into { $in: [...] } — same
+// multi-select-tab support used elsewhere (job.service.js, application.service.js).
+const parseCsvFilter = (value) => {
+  const tokens = String(value).split(',').map((v) => v.trim()).filter(Boolean);
+  return tokens.length > 1 ? { $in: tokens } : tokens[0];
+};
+
+const presentAdminPayment = (payment) => ({
+  id: payment._id,
+  user: payment.user && typeof payment.user === 'object'
+    ? { id: payment.user._id, name: payment.user.name, email: payment.user.email, avatar: payment.user.avatar }
+    : null,
+  // Prefer the plan's current display name; fall back to the payment's own
+  // tier/billingCycle snapshot if the plan was since deleted/renamed.
+  planName: payment.plan && typeof payment.plan === 'object' ? payment.plan.name : null,
+  tier: payment.tier,
+  billingCycle: payment.billingCycle,
+  amount: payment.amount,
+  amountBeforeCredit: payment.amountBeforeCredit,
+  walletApplied: payment.walletApplied,
+  currency: payment.currency,
+  status: payment.status,
+  gatewayOrderId: payment.gatewayOrderId,
+  gatewayPaymentId: payment.gatewayPaymentId,
+  createdAt: payment.createdAt,
+});
+
+const listAdminPayments = async (query) => {
+  const { page, limit, skip } = parsePagination(query);
+  const filter = {};
+
+  if (query.status) filter.status = parseCsvFilter(query.status);
+  if (query.tier) filter.tier = parseCsvFilter(query.tier);
+
+  if (query.search) {
+    const rx = buildRegex(query.search);
+    const matchingUsers = await User.find({ $or: [{ name: rx }, { email: rx }, { phone: rx }] }).select('_id').lean();
+    filter.$or = [
+      { user: { $in: matchingUsers.map((u) => u._id) } },
+      { gatewayOrderId: rx },
+      { receipt: rx },
+    ];
+  }
+
+  const [payments, total] = await Promise.all([
+    Payment.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate('user', 'name email avatar')
+      .populate('plan', 'name')
+      .lean(),
+    Payment.countDocuments(filter),
+  ]);
+
+  return { payments: payments.map(presentAdminPayment), page, limit, total };
+};
+
+// Stats row for the admin Payments page. Revenue is INR-only (same
+// convention as getAdminAnalytics above) — summing mixed currencies would be
+// meaningless without a conversion rate.
+const getPaymentStats = async () => {
+  const [revenueAgg, paidCount, failedCount, refundedCount] = await Promise.all([
+    Payment.aggregate([
+      { $match: { status: 'paid', currency: 'INR' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]),
+    Payment.countDocuments({ status: 'paid' }),
+    Payment.countDocuments({ status: 'failed' }),
+    Payment.countDocuments({ status: 'refunded' }),
+  ]);
+
+  return {
+    totalRevenueInr: revenueAgg[0]?.total || 0,
+    paidCount,
+    failedCount,
+    refundedCount,
+  };
+};
+
+// ── Admin subscriptions list ("View All" on the Subscriptions page) ──────────
+
+const presentAdminSubscription = (sub) => ({
+  id: sub._id,
+  candidate: sub.user && typeof sub.user === 'object' ? sub.user.name : null,
+  plan: sub.plan && typeof sub.plan === 'object' ? sub.plan.name : null,
+  tier: sub.tier,
+  billingCycle: sub.billingCycle,
+  status: sub.status,
+  startDate: sub.currentPeriodStart,
+  expiryDate: sub.currentPeriodEnd,
+});
+
+const listAdminSubscriptions = async (query) => {
+  const { page, limit, skip } = parsePagination(query);
+  const filter = {};
+
+  if (query.status) filter.status = parseCsvFilter(query.status);
+  if (query.tier) filter.tier = parseCsvFilter(query.tier);
+
+  if (query.search) {
+    const rx = buildRegex(query.search);
+    const matchingUsers = await User.find({ $or: [{ name: rx }, { email: rx }, { phone: rx }] }).select('_id').lean();
+    filter.user = { $in: matchingUsers.map((u) => u._id) };
+  }
+
+  const [subscriptions, total] = await Promise.all([
+    Subscription.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate('user', 'name email')
+      .populate('plan', 'name')
+      .lean(),
+    Subscription.countDocuments(filter),
+  ]);
+
+  return { subscriptions: subscriptions.map(presentAdminSubscription), page, limit, total };
+};
+
 module.exports = {
   getActivePlans,
   createOrder,
+  activate, // exported for payment.service.js's type-dispatch (reconcile + webhook)
   verifyPayment,
-  handleWebhook,
   getMySubscription,
   getAdminAnalytics,
+  listAdminPayments,
+  getPaymentStats,
+  listAdminSubscriptions,
 };

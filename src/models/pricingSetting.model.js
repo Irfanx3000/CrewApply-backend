@@ -10,6 +10,14 @@ const mongoose = require('mongoose');
 const pricingSettingSchema = new mongoose.Schema(
   {
     yearlyDiscountOverridePercent: { type: Number, default: null, min: 0, max: 100 },
+
+    // Flat fee for booking a Consultancy session, region-priced the same way
+    // Plan pricing is (see pricingRegion.util.js) — one price per region, not
+    // per-topic/per-duration (see consultancy feature's Phase 1 scope notes).
+    consultancyFee: {
+      india: { amount: { type: Number, default: 0, min: 0 } },  // paise
+      global: { amount: { type: Number, default: 0, min: 0 } }, // cents
+    },
   },
   {
     timestamps: true,

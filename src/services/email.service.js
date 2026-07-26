@@ -6,6 +6,7 @@ const verificationEmail = require('../emails/templates/verificationEmail');
 const resetPasswordEmail = require('../emails/templates/resetPasswordEmail');
 const applicationStatusEmail = require('../emails/templates/applicationStatusEmail');
 const otpEmail = require('../emails/templates/otpEmail');
+const adminInviteEmail = require('../emails/templates/adminInviteEmail');
 const { STATUS_NOTIFICATION_COPY } = require('../constants/applicationStatusCopy');
 
 let _transporter = null;
@@ -129,4 +130,27 @@ const sendOtpEmail = async ({ to, name, otp }) => {
   });
 };
 
-module.exports = { sendVerificationEmail, sendPasswordResetEmail, sendApplicationStatusEmail, sendOtpEmail };
+/**
+ * Sends the admin-invite email — distinct subject/copy from sendOtpEmail even
+ * though both deliver a 6-digit code, since this recipient is being invited
+ * to administer the platform, not verifying their own signup.
+ *
+ * @param {{ to: string, otp: string }} params
+ */
+const sendAdminInviteEmail = async ({ to, otp }) => {
+  const acceptUrl = `${config.adminClient.url}/accept-invite?email=${encodeURIComponent(to)}`;
+
+  await sendEmail({
+    to,
+    subject: "You've been invited to CrewApply Admin",
+    html: adminInviteEmail({ otp, acceptUrl }),
+  });
+};
+
+module.exports = {
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+  sendApplicationStatusEmail,
+  sendOtpEmail,
+  sendAdminInviteEmail,
+};

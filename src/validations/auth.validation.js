@@ -202,6 +202,29 @@ const googleAuth = [
   body('idToken').notEmpty().withMessage('Google ID token is required.'),
 ];
 
+/**
+ * POST /auth/accept-admin-invite
+ * Verifies the 6-digit email OTP an existing admin's invite sent, then sets
+ * the invited admin's name + password and activates the account.
+ */
+const acceptAdminInvite = [
+  emailField(),
+  body('otp')
+    .notEmpty().withMessage('OTP is required.')
+    .isLength({ min: 6, max: 6 }).withMessage('OTP must be exactly 6 digits.')
+    .isNumeric().withMessage('OTP must contain only digits.'),
+  nameField(),
+  passwordField(),
+  body('confirmPassword')
+    .notEmpty().withMessage('Please confirm your password.')
+    .custom((value, { req }) => {
+      if (value !== req.body.password) {
+        throw new Error('Passwords do not match.');
+      }
+      return true;
+    }),
+];
+
 module.exports = {
   register,
   verifyEmail,
@@ -215,4 +238,8 @@ module.exports = {
   resetPassword,
   changePassword,
   googleAuth,
+  acceptAdminInvite,
+  // Exported for reuse by adminAccount.validation.js (inviting an admin needs
+  // the same email format rules, without the rest of the register() chain).
+  emailField,
 };

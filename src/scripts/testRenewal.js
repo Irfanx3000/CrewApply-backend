@@ -19,6 +19,7 @@ const User = require('../models/user.model');
 const Payment = require('../models/payment.model');
 const Subscription = require('../models/subscription.model');
 const subscriptionService = require('../services/subscription.service');
+const paymentService = require('../services/payment.service');
 
 const fakeReq = { ip: '127.0.0.1', get: () => 'test-script' };
 const DAY = 24 * 60 * 60 * 1000;
@@ -34,7 +35,7 @@ const payViaWebhook = async (orderId, amount) => {
   };
   const raw = Buffer.from(JSON.stringify(event));
   const signature = crypto.createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET).update(raw).digest('hex');
-  await subscriptionService.handleWebhook({ rawBody: raw, signature }, fakeReq);
+  await paymentService.handleWebhook({ rawBody: raw, signature }, fakeReq);
 };
 
 const freshUser = async (u) => User.findById(u._id); // re-read cached entitlement
@@ -48,8 +49,11 @@ const freshUser = async (u) => User.findById(u._id); // re-read cached entitleme
   if (!user) {
     user = await User.create({
       name: 'Renewal Test', email, password: 'Passw0rd!23',
-      phone: '+919000000043', phoneVerified: true, isActive: true,
+      phone: '+919000000043', phoneVerified: true, isActive: true, country: 'India',
     });
+  } else if (user.country !== 'India') {
+    user.country = 'India';
+    await user.save();
   }
   await Payment.deleteMany({ user: user._id });
   await Subscription.deleteMany({ user: user._id });

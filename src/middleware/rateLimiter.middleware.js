@@ -78,4 +78,15 @@ const generalLimiter = createLimiter({
   max: config.rateLimit.general.max,
 });
 
-module.exports = { authLimiter, otpLimiter, passwordResetLimiter, paymentLimiter, generalLimiter };
+/**
+ * Applied to the universal search endpoints (admin + app).
+ * Each request fans out into several parallel Mongo queries, so this gets
+ * its own tighter, shorter-window cap on top of generalLimiter.
+ */
+const searchLimiter = createLimiter({
+  windowMs: config.rateLimit.search.windowMs,
+  max: config.rateLimit.search.max,
+  message: 'Too many search requests. Please slow down.',
+});
+
+module.exports = { authLimiter, otpLimiter, passwordResetLimiter, paymentLimiter, generalLimiter, searchLimiter };
