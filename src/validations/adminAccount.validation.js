@@ -16,7 +16,12 @@ const permissionsFieldValidators = () =>
 const inviteAdmin = [
   emailField(),
   body('confirm').optional().isBoolean().withMessage('confirm must be a boolean.'),
-  body('permissions').optional().isObject().withMessage('permissions must be an object.'),
+  // `nullable: true` is required, not cosmetic — "Grant full access" sends
+  // `permissions: null` explicitly (not omitted), and `.optional()` on its
+  // own only skips validation for `undefined`, not `null`. Without this,
+  // every full-access invite/edit failed with "Validation failed." (same
+  // class of bug as textSanitizer.js's noHtmlText `required` flag).
+  body('permissions').optional({ nullable: true }).isObject().withMessage('permissions must be an object.'),
   ...permissionsFieldValidators(),
 ];
 
@@ -25,7 +30,12 @@ const idParam = [
 ];
 
 const updatePermissions = [
-  body('permissions').optional().isObject().withMessage('permissions must be an object.'),
+  // `nullable: true` is required, not cosmetic — "Grant full access" sends
+  // `permissions: null` explicitly (not omitted), and `.optional()` on its
+  // own only skips validation for `undefined`, not `null`. Without this,
+  // every full-access invite/edit failed with "Validation failed." (same
+  // class of bug as textSanitizer.js's noHtmlText `required` flag).
+  body('permissions').optional({ nullable: true }).isObject().withMessage('permissions must be an object.'),
   ...permissionsFieldValidators(),
 ];
 
