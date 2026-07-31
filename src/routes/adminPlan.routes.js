@@ -8,11 +8,12 @@ const subscriptionValidation = require('../validations/subscription.validation')
 const validate = require('../middleware/validate.middleware');
 const authenticate = require('../middleware/auth.middleware');
 const authorize = require('../middleware/authorize.middleware');
+const requireSection = require('../middleware/requireSection.middleware');
 const { ROLES } = require('../constants/roles');
 
 // Admin-only plan (price/feature) management. Tested via Postman with an admin token
 // until the admin panel exists.
-router.use(authenticate, authorize(ROLES.ADMIN));
+router.use(authenticate, authorize(ROLES.ADMIN), requireSection('subscriptions'));
 
 router.get('/', adminPlanController.list);
 router.post('/', validate(subscriptionValidation.createPlan), adminPlanController.create);

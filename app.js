@@ -95,6 +95,11 @@ app.use('/uploads/company', express.static(path.join(UPLOADS_ROOT, 'company')));
 app.use('/uploads/banners', express.static(path.join(UPLOADS_ROOT, 'banners')));
 app.use('/uploads/category-icons', express.static(path.join(UPLOADS_ROOT, 'category-icons')));
 
+// Transactional email assets (logo, etc.) — served under this API's own
+// public URL (see config.publicUrl) so emails embed a real reachable <img
+// src>, not a base64 data URI (Gmail blocks those — see emailLayout.js).
+app.use('/email-assets', express.static(path.join(__dirname, 'src/emails/assets')));
+
 // ── HTTP Parameter Pollution Prevention ──────────────────────────────────────
 // Guards against duplicate query parameters (e.g. ?sort=asc&sort=desc).
 app.use(hpp());

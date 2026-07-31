@@ -5,6 +5,7 @@ const router = express.Router();
 
 const authenticate = require('../middleware/auth.middleware');
 const authorize = require('../middleware/authorize.middleware');
+const requireSection = require('../middleware/requireSection.middleware');
 const validate = require('../middleware/validate.middleware');
 const { categoryIconUpload } = require('../middleware/upload.middleware');
 const { ROLES } = require('../constants/roles');
@@ -12,7 +13,7 @@ const adminJobTaxonomyController = require('../controllers/adminJobTaxonomy.cont
 const jobTaxonomyValidation = require('../validations/jobTaxonomy.validation');
 
 // Admin-only Department/Vessel Type/Category (job taxonomy) management.
-router.use(authenticate, authorize(ROLES.ADMIN));
+router.use(authenticate, authorize(ROLES.ADMIN), requireSection('categories'));
 
 router.get('/', validate(jobTaxonomyValidation.listQuery), adminJobTaxonomyController.listAdminJobTaxonomies);
 router.post('/', validate(jobTaxonomyValidation.createJobTaxonomy), adminJobTaxonomyController.createJobTaxonomy);

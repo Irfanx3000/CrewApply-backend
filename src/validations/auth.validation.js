@@ -164,10 +164,14 @@ const forgotPassword = [
 ];
 
 /**
- * POST /auth/reset-password/:token
+ * POST /auth/reset-password
  */
-const resetPassword = [
-  tokenParam(),
+const resetPasswordWithOtp = [
+  emailField(),
+  body('otp')
+    .notEmpty().withMessage('OTP is required.')
+    .isLength({ min: 6, max: 6 }).withMessage('OTP must be exactly 6 digits.')
+    .isNumeric().withMessage('OTP must contain only digits.'),
   passwordField('newPassword'),
   body('confirmPassword')
     .notEmpty().withMessage('Please confirm your new password.')
@@ -235,7 +239,7 @@ module.exports = {
   refresh,
   logout,
   forgotPassword,
-  resetPassword,
+  resetPasswordWithOtp,
   changePassword,
   googleAuth,
   acceptAdminInvite,

@@ -25,6 +25,12 @@ const config = {
     url: process.env.CLIENT_URL || 'http://localhost:3000',
   },
 
+  // This API's own public base URL — used to build absolute links to assets
+  // it serves itself (e.g. the email logo, see src/emails/emailLayout.js).
+  // In production this must be the real reachable URL (https://api.crewapply.com)
+  // or embedded images in transactional emails won't render for recipients.
+  publicUrl: process.env.PUBLIC_URL || `http://localhost:${parseInt(process.env.PORT, 10) || 5000}`,
+
   // The CrewApply-admin web app — a separate deployment from the mobile
   // app's own client.url above. Used to link the admin-invite email to the
   // Accept Invite screen there.
@@ -81,7 +87,6 @@ const config = {
     maxLoginAttempts: parseInt(process.env.MAX_LOGIN_ATTEMPTS, 10) || 5,
     lockDurationMinutes: parseInt(process.env.LOCK_DURATION_MINUTES, 10) || 30,
     emailVerificationExpiryHours: 24,
-    passwordResetExpiryHours: 1,
   },
 
   rateLimit: {
@@ -111,9 +116,14 @@ const config = {
     // Shared across nearly every route (see app.js) — sized for a real
     // multi-screen app with background polling (e.g. the subscription
     // screen's price-refresh polling), not just a handful of manual requests.
+    // Bumped from 300: a burst of stacked navigation screens each fetching
+    // on mount, plus notification polling and silent token refresh, could
+    // exhaust 300/15min under legitimate fast multi-screen usage alone —
+    // see the Career Profile duplicate-fetch fix in CareerProfileContext.jsx
+    // for the actual root-cause fix; this is just extra headroom on top.
     general: {
       windowMs: 15 * 60 * 1000,
-      max: 300,
+      max: 600,
     },
     // Universal search fans out into several parallel Mongo queries per
     // request — tighter, shorter-window cap than generalLimiter alone.

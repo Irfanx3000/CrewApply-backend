@@ -5,12 +5,13 @@ const router = express.Router();
 
 const authenticate = require('../middleware/auth.middleware');
 const authorize = require('../middleware/authorize.middleware');
+const requireSection = require('../middleware/requireSection.middleware');
 const validate = require('../middleware/validate.middleware');
 const { ROLES } = require('../constants/roles');
 const adminReferralController = require('../controllers/adminReferral.controller');
 const adminReferralValidation = require('../validations/adminReferral.validation');
 
-router.use(authenticate, authorize(ROLES.ADMIN));
+router.use(authenticate, authorize(ROLES.ADMIN), requireSection('referrals'));
 
 router.get('/', validate(adminReferralValidation.listReferralsQuery), adminReferralController.listReferrals);
 router.get('/stats', adminReferralController.getReferralStats);

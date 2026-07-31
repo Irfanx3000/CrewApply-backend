@@ -12,8 +12,29 @@ const listAdmins = asyncHandler(async (req, res) => {
 });
 
 const inviteAdmin = asyncHandler(async (req, res) => {
-  const result = await adminAccountService.inviteAdmin({ email: req.body.email }, req.user._id, req);
+  const result = await adminAccountService.inviteAdmin(
+    { email: req.body.email, confirm: req.body.confirm === true, permissions: req.body.permissions },
+    req.user._id,
+    req,
+  );
+
+  // Not yet an actual invite — the frontend shows a confirmation prompt and
+  // resubmits with confirm: true, so this isn't the 201 CREATED case below.
+  if (result.requiresConfirmation) {
+    return successResponse(res, AUTH_MESSAGES.ADMIN_INVITE_CONFIRMATION_REQUIRED, result, HTTP_STATUS.OK);
+  }
+
   return successResponse(res, AUTH_MESSAGES.ADMIN_INVITE_SENT, result, HTTP_STATUS.CREATED);
 });
 
-module.exports = { listAdmins, inviteAdmin };
+const revokeAdmin = asyncHandler(async (req, res) => {
+  const result = await adminAccountService.revokeAdmin(req.params.id, req.user._id, req);
+  return successResponse(res, AUTH_MESSAGES.ADMIN_ACCESS_REVOKED, result);
+});
+
+const updatePermissions = asyncHandler(async (req, res) => {
+  const result = await adminAccountService.updatePermissions(req.params.id, req.body.permissions, req.user._id, req);
+  return successResponse(res, AUTH_MESSAGES.ADMIN_PERMISSIONS_UPDATED, result);
+});
+
+module.exports = { listAdmins, inviteAdmin, revokeAdmin, updatePermissions };

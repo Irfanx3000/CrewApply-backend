@@ -9,6 +9,7 @@ const razorpayService = require('./razorpay.service');
 const paymentService = require('./payment.service');
 const auditService = require('./audit.service');
 const notificationService = require('./notification.service');
+const emailService = require('./email.service');
 const pricingSettingService = require('./pricingSetting.service');
 const { getApplicationUsage } = require('./application.service');
 const referralService = require('./referral.service');
@@ -308,7 +309,7 @@ const activate = async (payment, { gatewayPaymentId = null, signature = null } =
   });
 
   User.findById(paid.user)
-    .select('name')
+    .select('name email')
     .then((purchaser) => {
       if (!purchaser) return;
       notificationService.notifyAdmins({
@@ -317,6 +318,23 @@ const activate = async (payment, { gatewayPaymentId = null, signature = null } =
         body: `${purchaser.name} purchased the ${plan?.name ?? paid.tier} plan.`,
         data: { userId: paid.user, tier: paid.tier },
       });
+
+      // Fire-and-forget, same non-blocking contract as the wallet/referral
+      // side effects above — a failed confirmation email must never undo an
+      // already-successful payment/activation.
+      if (purchaser.email) {
+        emailService
+          .sendSubscriptionSuccessEmail({
+            to: purchaser.email,
+            name: purchaser.name,
+            planName: plan?.name ?? paid.tier,
+            billingCycle: paid.billingCycle,
+            amount: paid.amount,
+            currency: paid.currency,
+            periodEnd,
+          })
+          .catch(() => {});
+      }
     })
     .catch(() => {});
 

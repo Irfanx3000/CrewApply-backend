@@ -71,7 +71,7 @@ const paymentLimiter = createLimiter({
 
 /**
  * General-purpose limiter for all API routes.
- * 100 requests per 15 minutes per IP.
+ * 600 requests per 15 minutes per IP (see config/index.js for rationale).
  */
 const generalLimiter = createLimiter({
   windowMs: config.rateLimit.general.windowMs,

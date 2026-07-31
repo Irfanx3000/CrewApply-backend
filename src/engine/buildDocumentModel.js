@@ -44,6 +44,7 @@ function buildHeader(content, layout) {
     headline: content.maritime?.rank || content.maritime?.designation || content.maritime?.department || null,
     photo: visible(layout.visibilityRules, 'personal.photo', layout.header?.showPhoto) ? personal.avatarUrl : null,
     contactLine,
+    headerStyle: layout.header?.style || 'centered',
   });
 }
 
@@ -169,7 +170,11 @@ function buildDocumentModel(content, layout) {
   const objective = buildObjective(content, layout);
   if (objective) blocks.push(objective);
 
-  blocks.push(block(T.DIVIDER, { style: layout.divider?.style, color: layout.divider?.color }));
+  // 'none' means no divider at all — skipped here rather than left to the
+  // painter to no-op, so a template that opts out genuinely renders nothing.
+  if ((layout.divider?.style || 'line') !== 'none') {
+    blocks.push(block(T.DIVIDER, { style: layout.divider?.style, color: layout.divider?.color }));
+  }
 
   const order = (layout.sectionOrder || []).filter((key) => key !== 'personal' && key !== 'contact');
   for (const key of order) {

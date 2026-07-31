@@ -7,6 +7,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const { successResponse } = require('../utils/apiResponse');
 const { AUTH_MESSAGES } = require('../constants/messages');
 const { HTTP_STATUS } = require('../constants/httpStatus');
+const { ROLES } = require('../constants/roles');
 
 /**
  * Controllers are intentionally thin.
@@ -70,6 +71,30 @@ const resendVerification = asyncHandler(async (req, res) => {
   return successResponse(res, AUTH_MESSAGES.VERIFICATION_EMAIL_SENT);
 });
 
+// ── GET /auth/me ───────────────────────────────────────────────────────────────
+// Lightweight identity check (no profile-completion computation, unlike
+// GET /users/profile) — polled by the admin panel to detect access/permission
+// changes made to an already-logged-in session without waiting for re-login.
+
+const me = asyncHandler(async (req, res) => {
+  const { _id, name, email, role, isAdmin, permissions } = req.user;
+
+  // Mirrors authorize.middleware.js's own admin gate exactly: a plain
+  // role: ADMIN account has isAdmin: false by default (that field is only
+  // ever set for a *promoted* seafarer/recruiter), so either condition alone
+  // is wrong — only the OR matches "can this session use the admin panel."
+  const hasAdminAccess = role === ROLES.ADMIN || isAdmin === true;
+
+  return successResponse(res, AUTH_MESSAGES.CURRENT_USER_FETCHED, {
+    id: _id,
+    name,
+    email,
+    isAdmin,
+    hasAdminAccess,
+    permissions: permissions ?? null,
+  });
+});
+
 // ── POST /auth/login ──────────────────────────────────────────────────────────
 
 const login = asyncHandler(async (req, res) => {
@@ -116,13 +141,12 @@ const forgotPassword = asyncHandler(async (req, res) => {
   return successResponse(res, AUTH_MESSAGES.PASSWORD_RESET_EMAIL_SENT);
 });
 
-// ── POST /auth/reset-password/:token ─────────────────────────────────────────
+// ── POST /auth/reset-password ─────────────────────────────────────────────────
 
-const resetPassword = asyncHandler(async (req, res) => {
-  const { newPassword } = req.body;
-  const { token } = req.params;
+const resetPasswordWithOtp = asyncHandler(async (req, res) => {
+  const { email, otp, newPassword } = req.body;
 
-  await authService.resetPassword({ token, newPassword }, req);
+  await authService.resetPasswordWithOtp({ email, otp, newPassword }, req);
 
   return successResponse(res, AUTH_MESSAGES.PASSWORD_RESET_SUCCESS);
 });
@@ -170,12 +194,13 @@ module.exports = {
   verifyMobile,
   verifyEmail,
   resendVerification,
+  me,
   login,
   refresh,
   logout,
   logoutAll,
   forgotPassword,
-  resetPassword,
+  resetPasswordWithOtp,
   changePassword,
   googleAuth,
   acceptAdminInvite,

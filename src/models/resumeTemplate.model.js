@@ -57,6 +57,10 @@ const resumeTemplateSchema = new mongoose.Schema(
         baseFontSize: { type: Number, default: 10 },
         headingScale: { type: Number, default: 1.4 },
         lineHeight: { type: Number, default: 1.3 },
+        // 'upper' uppercases section titles (e.g. "EXPERIENCE") at paint
+        // time — a font-free way to give a template a distinct voice, since
+        // pdfmake only has Roboto registered (see engine/renderers/pdf/fonts.js).
+        sectionTitleCase: { type: String, enum: { values: ['title', 'upper'], message: 'Invalid section title case.' }, default: 'title' },
       },
       colors: {
         primary: { type: String, default: '#0D3E85' },

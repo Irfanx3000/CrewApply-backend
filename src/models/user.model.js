@@ -30,6 +30,41 @@ const maritimeProfileSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// ── Per-section admin permissions ─────────────────────────────────────────────
+// One entry per admin-panel sidebar section (matches CrewApply-admin's
+// NAV_ITEMS keys, minus 'dashboard' — that's the universal landing page every
+// admin sees regardless of scope, with no write actions of its own).
+const PERMISSION_SECTIONS = Object.freeze([
+  'jobs', 'categories', 'applications', 'users', 'subscriptions',
+  'referrals', 'payments', 'consultancy', 'support', 'banners', 'analytics', 'settings',
+]);
+
+const sectionPermissionSchema = new mongoose.Schema(
+  {
+    read: { type: Boolean, default: false },
+    write: { type: Boolean, default: false },
+  },
+  { _id: false }
+);
+
+const permissionsSchema = new mongoose.Schema(
+  {
+    jobs: { type: sectionPermissionSchema, default: undefined },
+    categories: { type: sectionPermissionSchema, default: undefined },
+    applications: { type: sectionPermissionSchema, default: undefined },
+    users: { type: sectionPermissionSchema, default: undefined },
+    subscriptions: { type: sectionPermissionSchema, default: undefined },
+    referrals: { type: sectionPermissionSchema, default: undefined },
+    payments: { type: sectionPermissionSchema, default: undefined },
+    consultancy: { type: sectionPermissionSchema, default: undefined },
+    support: { type: sectionPermissionSchema, default: undefined },
+    banners: { type: sectionPermissionSchema, default: undefined },
+    analytics: { type: sectionPermissionSchema, default: undefined },
+    settings: { type: sectionPermissionSchema, default: undefined },
+  },
+  { _id: false }
+);
+
 // ── Main schema ───────────────────────────────────────────────────────────────
 const userSchema = new mongoose.Schema(
   {
@@ -60,6 +95,37 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: { values: ALL_ROLES, message: `Invalid role. Must be one of: ${ALL_ROLES.join(', ')}.` },
       default: ROLES.USER,
+    },
+
+    // Grants admin-panel access on TOP of an existing seafarer/recruiter
+    // account, without touching `role` (which still governs their mobile-app
+    // identity/behavior) — lets one person keep full seafarer access AND log
+    // into the admin panel with the same account. A brand-new admin invite
+    // (no prior account) still just uses role: ROLES.ADMIN and never needs
+    // this; see adminAccount.service.js.
+    isAdmin: {
+      type: Boolean,
+      default: false,
+    },
+
+    // Per-section read/write scope for this admin (see permissionsSchema
+    // above). ABSENT (no default here, deliberately) means full access to
+    // every section — this is what grandfathers every admin that predates
+    // this feature, and is the default for any invite that doesn't use the
+    // scope picker. Only ever set on an admin whose invite explicitly chose
+    // a restricted scope.
+    permissions: {
+      type: permissionsSchema,
+    },
+
+    // Staged permissions chosen at invite time, applied to `permissions`
+    // once the invite is actually accepted (see adminAccount.service.js) —
+    // mirrors how `isAdmin` itself only flips true on accept, not invite.
+    // Never read for access control; select: false keeps it out of default
+    // query projections.
+    pendingPermissions: {
+      type: permissionsSchema,
+      select: false,
     },
 
     avatar: {
@@ -164,19 +230,6 @@ const userSchema = new mongoose.Schema(
     },
 
     emailVerificationTokenExpiry: {
-      type: Date,
-      default: null,
-      select: false,
-    },
-
-    // ── Password reset ─────────────────────────────────────────────────────────
-    passwordResetTokenHash: {
-      type: String,
-      default: null,
-      select: false,
-    },
-
-    passwordResetTokenExpiry: {
       type: Date,
       default: null,
       select: false,
@@ -292,6 +345,17 @@ const userSchema = new mongoose.Schema(
       select: false,
     },
 
+    // ── Job category preferences ──────────────────────────────────────────────
+    // Category *names*, not ObjectId refs — matches Job.category's own storage
+    // (a plain String validated against the admin-manageable JobTaxonomy
+    // collection at the request layer, not a fixed schema enum). Drives
+    // notifyEligibleUsersForJob's category-match path (see notification.service.js).
+    preferredCategories: {
+      type: [String],
+      default: [],
+      select: false,
+    },
+
     // ── Push notifications ─────────────────────────────────────────────────────
     // Array (not a single field) — a user may be logged in on multiple devices.
     // Internal plumbing, never needed in profile responses.
@@ -373,3 +437,4 @@ userSchema.methods.resetLoginAttempts = async function () {
 };
 
 module.exports = mongoose.model('User', userSchema);
+module.exports.PERMISSION_SECTIONS = PERMISSION_SECTIONS;

@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const Notification = require('../models/notification.model');
 const User = require('../models/user.model');
 const pushService = require('./push.service');
-const resendService = require('./resend.service');
+const emailService = require('./email.service');
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
@@ -59,22 +59,35 @@ const notifyAdmins = async ({ type, title, body, data = null }) => {
  *
  * Channel is tier-gated, matching the Plan.features copy shown on the
  * Subscription screen: Crew Start is "Job alerts (App)" — in-app/push only —
- * while Premium ("Email + App") and Elite ("All Channels") also get an
- * email via resendService. The in-app notification (and its push send,
- * inside create()) always fires regardless of tier; email is the one
- * tier-gated extra channel.
+ * while Premium and Elite (both "Email + App") also get an email via
+ * emailService. Premium and Elite are intentionally identical here — Elite
+ * differentiates via its uncapped application limit, not an extra channel.
+ * The in-app notification (and its push send, inside create()) always fires
+ * regardless of tier; email is the one tier-gated extra channel.
  */
 const notifyEligibleUsersForJob = async (job) => {
   try {
     const minRank = TIER_RANK[job.minimumTier] || TIER_RANK.start;
     const qualifyingTiers = PLAN_TIERS.filter((tier) => TIER_RANK[tier] >= minRank);
 
-    const users = await User.find({
-      subscriptionStatus: 'active',
-      subscriptionTier: { $in: qualifyingTiers },
-    }).select('_id email subscriptionTier');
+    // Two independent match reasons — plan-tier eligibility, and a user's own
+    // opted-in category preferences (see User.preferredCategories) — merged
+    // and de-duplicated by _id so nobody gets two notifications for the same
+    // job just because they qualify both ways.
+    const [tierUsers, categoryUsers] = await Promise.all([
+      User.find({
+        subscriptionStatus: 'active',
+        subscriptionTier: { $in: qualifyingTiers },
+      }).select('_id email subscriptionTier'),
+      job.category
+        ? User.find({ preferredCategories: job.category }).select('_id email subscriptionTier')
+        : Promise.resolve([]),
+    ]);
+    const users = Array.from(
+      new Map([...tierUsers, ...categoryUsers].map((u) => [String(u._id), u])).values()
+    );
 
-    const title = 'New job matching your plan';
+    const title = 'New job posted';
     const body = `${job.title} at ${job.companyName} was just posted for ${job.rank} — ${job.department}.`;
 
     await Promise.all(
@@ -88,7 +101,7 @@ const notifyEligibleUsersForJob = async (job) => {
         });
 
         if (u.subscriptionTier !== 'start') {
-          resendService.sendJobAlertEmail(u.email, job).catch(() => {});
+          emailService.sendJobAlertEmail(u.email, job).catch(() => {});
         }
       })
     );

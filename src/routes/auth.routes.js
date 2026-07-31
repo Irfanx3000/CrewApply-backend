@@ -29,13 +29,19 @@ router.post('/resend-verification', passwordResetLimiter, validate(authValidatio
 router.post('/login',               authLimiter,          validate(authValidation.login),               authController.login);
 router.post('/refresh',             generalLimiter,       validate(authValidation.refresh),             authController.refresh);
 
+// ── Current session identity — polled by the admin panel to pick up ─────────
+// isAdmin/permission changes without waiting for the next login. Intentionally
+// gated by `authenticate` only (no `authorize`), since a demoted/downgraded
+// admin still needs to be able to call this to learn that they were demoted.
+router.get('/me',                   authenticate,                                                        authController.me);
+
 // ── Logout (requires a valid access token to prevent anonymous logout spam) ──
 router.post('/logout',              authenticate,         validate(authValidation.logout),              authController.logout);
 router.post('/logout-all',          authenticate,                                                       authController.logoutAll);
 
 // ── Password flows ─────────────────────────────────────────────────────────────
-router.post('/forgot-password',     passwordResetLimiter, validate(authValidation.forgotPassword),     authController.forgotPassword);
-router.post('/reset-password/:token',                     validate(authValidation.resetPassword),      authController.resetPassword);
+router.post('/forgot-password',     passwordResetLimiter, validate(authValidation.forgotPassword),        authController.forgotPassword);
+router.post('/reset-password',      passwordResetLimiter, validate(authValidation.resetPasswordWithOtp),  authController.resetPasswordWithOtp);
 router.post('/change-password',     authenticate,         validate(authValidation.changePassword),     authController.changePassword);
 
 // ── Google OAuth ───────────────────────────────────────────────────────────────

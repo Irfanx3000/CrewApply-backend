@@ -74,6 +74,16 @@ const updateMaritimeProfile = [
   optionalDate('availabilityDate'),
 ];
 
+// ── PATCH /user/preferences ───────────────────────────────────────────────────
+
+const updatePreferences = [
+  body('preferredCategories')
+    .optional({ nullable: true })
+    .isArray().withMessage('preferredCategories must be an array.'),
+  body('preferredCategories.*')
+    .isString().trim().notEmpty().withMessage('Each preferred category must be a non-empty string.'),
+];
+
 // ── Document metadata validators ──────────────────────────────────────────────
 
 const certificateMetadata = [
@@ -143,6 +153,7 @@ const uploadDocumentBody = [
 module.exports = {
   updateProfile,
   updateMaritimeProfile,
+  updatePreferences,
   certificateMetadata,
   passportMetadata,
   cdcMetadata,

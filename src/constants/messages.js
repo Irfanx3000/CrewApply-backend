@@ -13,6 +13,7 @@ const AUTH_MESSAGES = Object.freeze({
 
   // Login
   LOGIN_SUCCESS: 'Login successful.',
+  CURRENT_USER_FETCHED: 'Current user fetched successfully.',
   INVALID_CREDENTIALS: 'Invalid login credentials.',
   EMAIL_NOT_VERIFIED: 'Please verify your email address before logging in.',
   ACCOUNT_LOCKED: 'Your account has been temporarily locked due to multiple failed login attempts. Please try again later.',
@@ -30,8 +31,7 @@ const AUTH_MESSAGES = Object.freeze({
   LOGOUT_ALL_SUCCESS: 'Logged out from all devices successfully.',
 
   // Password
-  PASSWORD_RESET_EMAIL_SENT: 'If an account with that email exists, a password reset link has been sent.',
-  INVALID_RESET_TOKEN: 'Password reset link is invalid or has expired.',
+  PASSWORD_RESET_EMAIL_SENT: 'If an account with that email exists, a password reset code has been sent.',
   PASSWORD_RESET_SUCCESS: 'Password has been reset successfully. Please log in with your new password.',
   PASSWORD_CHANGED: 'Password changed successfully. All other sessions have been revoked.',
   INCORRECT_CURRENT_PASSWORD: 'Current password is incorrect.',
@@ -82,7 +82,15 @@ const AUTH_MESSAGES = Object.freeze({
   ADMIN_INVITE_ACCEPTED: 'Your admin account is now active.',
   ADMIN_ALREADY_ACTIVE: 'This email already belongs to an active admin.',
   EMAIL_BELONGS_TO_OTHER_ACCOUNT: 'This email is already registered to a different account.',
+  USER_ALREADY_ADMIN: 'This user already has admin access.',
+  ADMIN_INVITE_CONFIRMATION_REQUIRED: 'This email belongs to an existing account. Confirm to grant admin access.',
   ADMIN_INVITE_NOT_FOUND: 'No pending invite was found for this email.',
+  ADMIN_NOT_FOUND: 'Admin account not found.',
+  CANNOT_REVOKE_SELF: 'You cannot revoke your own admin access.',
+  ADMIN_NOT_CURRENTLY_ACTIVE: 'This account does not currently have admin access.',
+  ADMIN_ACCESS_REVOKED: 'Admin access revoked.',
+  CANNOT_EDIT_OWN_PERMISSIONS: 'You cannot edit your own permissions.',
+  ADMIN_PERMISSIONS_UPDATED: 'Admin permissions updated.',
 
   // Documents
   DOCUMENT_UPLOADED: 'Document uploaded successfully.',
@@ -199,6 +207,13 @@ const AUTH_MESSAGES = Object.freeze({
   CONSULTANCY_BOOKING_STATUS_UPDATED: 'Booking status updated successfully.',
   CONSULTANCY_BOOKING_INVALID_STATUS_TRANSITION: 'This booking has already been decided and cannot be updated again.',
   CONSULTANCY_RESUME_NOT_FOUND: 'No active resume found on your account.',
+
+  // Support inquiries
+  SUPPORT_INQUIRY_CREATED: 'Your message has been sent. Our team will get back to you as soon as possible.',
+  SUPPORT_INQUIRIES_FETCHED: 'Support inquiries fetched successfully.',
+  SUPPORT_INQUIRY_FETCHED: 'Support inquiry fetched successfully.',
+  SUPPORT_INQUIRY_NOT_FOUND: 'Support inquiry not found.',
+  SUPPORT_INQUIRY_STATUS_UPDATED: 'Support inquiry updated successfully.',
 
   // Referrals & wallet
   REFERRAL_FETCHED: 'Referral details fetched successfully.',

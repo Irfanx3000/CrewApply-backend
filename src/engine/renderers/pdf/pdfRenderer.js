@@ -26,47 +26,87 @@ function resolveImagePath(relativePath) {
 }
 
 // ── One "paint" function per IDM block type — the finite vocabulary from
-// engine/blocks.js. Each returns a pdfmake content node (or array of them). ──
+// engine/blocks.js. Each returns a pdfmake content node (or array of them).
+// `ctx` (colors/spacing/typography, resolved once in render() below) is
+// threaded through every call so template config actually reaches the PDF
+// instead of being silently dropped in favor of hardcoded values. ──────────
 
-function paintHeader(b, colors) {
+function paintHeader(b, ctx) {
+  const { colors, spacing } = ctx;
+  const style = b.props.headerStyle || 'centered';
+  const alignment = style === 'left' ? 'left' : 'center';
+  const bottomMargin = spacing.sectionGap ?? 12;
+
   const nodes = [{ text: b.props.name || '', style: 'name' }];
   if (b.props.headline) nodes.push({ text: b.props.headline, style: 'headline' });
   const photoPath = resolveImagePath(b.props.photo);
-  if (photoPath) nodes.unshift({ image: photoPath, width: 60, height: 60, alignment: 'center', margin: [0, 0, 0, 8] });
+  if (photoPath) nodes.unshift({ image: photoPath, width: 60, height: 60, alignment, margin: [0, 0, 0, 8] });
   if (b.props.contactLine) nodes.push({ text: b.props.contactLine, style: 'muted', margin: [0, 4, 0, 0] });
-  return { stack: nodes, alignment: 'center', margin: [0, 0, 0, 12] };
+
+  // 'banner' keeps the centered header but adds a bold colored rule beneath
+  // it — a distinct treatment without the complexity of a true text-over-
+  // fill overlay, which pdfmake doesn't support cleanly for this vocabulary.
+  if (style === 'banner') {
+    return {
+      stack: [
+        { stack: nodes, alignment: 'center', margin: [0, 0, 0, 6] },
+        {
+          canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 3, lineColor: colors.primary || '#0D3E85' }],
+          margin: [0, 0, 0, bottomMargin],
+        },
+      ],
+    };
+  }
+
+  return { stack: nodes, alignment, margin: [0, 0, 0, bottomMargin] };
 }
 
-function paintDivider(b) {
+function paintDivider(b, ctx) {
+  const { spacing } = ctx;
+  const style = b.props.style || 'line';
+  const bottomMargin = spacing.sectionGap ?? 12;
+  const color = b.props.color || '#D9D9D9';
+
+  // 'none' never reaches here — buildDocumentModel.js skips the block
+  // entirely for that style rather than relying on a painter no-op.
+  if (style === 'dots') {
+    const dotCount = 30;
+    const gap = 515 / (dotCount - 1);
+    const canvas = Array.from({ length: dotCount }, (_, i) => ({
+      type: 'ellipse', x: i * gap, y: 0, r1: 1, r2: 1, color,
+    }));
+    return { canvas, margin: [0, 5, 0, bottomMargin] };
+  }
+
   return {
-    canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: b.props.thickness || 1, lineColor: b.props.color || '#D9D9D9' }],
-    margin: [0, 4, 0, 12],
+    canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: b.props.thickness || 1, lineColor: color }],
+    margin: [0, 4, 0, bottomMargin],
   };
 }
 
-function paintParagraph(b) {
-  return { text: b.props.text || '', margin: [0, 0, 0, 8] };
+function paintParagraph(b, ctx) {
+  return { text: b.props.text || '', margin: [0, 0, 0, ctx.spacing.blockPadding ?? 4] };
 }
 
-function paintBulletList(b) {
+function paintBulletList(b, ctx) {
   if (!b.props.items?.length) return null;
-  return { ul: b.props.items, margin: [0, 2, 0, 8] };
+  return { ul: b.props.items, margin: [0, 2, 0, ctx.spacing.blockPadding ?? 4] };
 }
 
-function paintTimelineItem(b) {
+function paintTimelineItem(b, ctx) {
   const nodes = [{ text: b.props.title || '', bold: true }];
   const meta = [b.props.subtitle, b.props.dateRange].filter(Boolean).join('  •  ');
   if (meta) nodes.push({ text: meta, style: 'muted' });
-  const children = (b.children || []).map(paintBlock).filter(Boolean);
-  return { stack: [...nodes, ...children], margin: [0, 0, 0, 10] };
+  const children = (b.children || []).map((child) => paintBlock(child, ctx)).filter(Boolean);
+  return { stack: [...nodes, ...children], margin: [0, 0, 0, ctx.spacing.itemGap ?? 8] };
 }
 
-function paintTimeline(b) {
-  const items = (b.children || []).map(paintTimelineItem).filter(Boolean);
+function paintTimeline(b, ctx) {
+  const items = (b.children || []).map((child) => paintTimelineItem(child, ctx)).filter(Boolean);
   return items.length ? { stack: items } : null;
 }
 
-function paintTable(b) {
+function paintTable(b, ctx) {
   const { columns, rows } = b.props;
   if (!columns?.length || !rows?.length) return null;
   return {
@@ -79,13 +119,15 @@ function paintTable(b) {
       ],
     },
     layout: 'lightHorizontalLines',
-    margin: [0, 2, 0, 8],
+    margin: [0, 2, 0, ctx.spacing.blockPadding ?? 4],
   };
 }
 
-function paintColumns(b) {
-  const cols = (b.children || []).map((colBlocks) => ({ stack: (colBlocks || []).map(paintBlock).filter(Boolean) }));
-  return { columns: cols, margin: [0, 0, 0, 8] };
+function paintColumns(b, ctx) {
+  const cols = (b.children || []).map((colBlocks) => ({
+    stack: (colBlocks || []).map((child) => paintBlock(child, ctx)).filter(Boolean),
+  }));
+  return { columns: cols, margin: [0, 0, 0, ctx.spacing.blockPadding ?? 4] };
 }
 
 function paintImage(b) {
@@ -101,10 +143,11 @@ function paintPageBreak() {
   return { text: '', pageBreak: 'after' };
 }
 
-function paintSection(b) {
-  const children = (b.children || []).map(paintBlock).filter(Boolean);
+function paintSection(b, ctx) {
+  const children = (b.children || []).map((child) => paintBlock(child, ctx)).filter(Boolean);
   if (!children.length) return null;
-  return { stack: [{ text: b.props.title || '', style: 'sectionTitle' }, ...children], margin: [0, 0, 0, 12] };
+  const title = ctx.typography.sectionTitleCase === 'upper' ? (b.props.title || '').toUpperCase() : (b.props.title || '');
+  return { stack: [{ text: title, style: 'sectionTitle' }, ...children], margin: [0, 0, 0, ctx.spacing.sectionGap ?? 12] };
 }
 
 const PAINTERS = {
@@ -122,9 +165,9 @@ const PAINTERS = {
   [T.SECTION]: paintSection,
 };
 
-function paintBlock(b) {
+function paintBlock(b, ctx) {
   const painter = PAINTERS[b.type];
-  return painter ? painter(b) : null;
+  return painter ? painter(b, ctx) : null;
 }
 
 function buildStyles(typography, colors) {
@@ -142,14 +185,15 @@ function buildStyles(typography, colors) {
  * only the closed Block vocabulary.
  */
 async function render(documentModel) {
-  const { page = {}, typography = {}, colors = {}, blocks = [] } = documentModel;
+  const { page = {}, typography = {}, colors = {}, spacing = {}, blocks = [] } = documentModel;
+  const ctx = { colors, spacing, typography };
 
   const docDefinition = {
     pageSize: page.size || 'A4',
     pageMargins: [page.margins?.left ?? 40, page.margins?.top ?? 40, page.margins?.right ?? 40, page.margins?.bottom ?? 40],
     defaultStyle: { font: 'Roboto', fontSize: typography.baseFontSize || 10, lineHeight: typography.lineHeight || 1.3 },
     styles: buildStyles(typography, colors),
-    content: blocks.map(paintBlock).filter(Boolean),
+    content: blocks.map((b) => paintBlock(b, ctx)).filter(Boolean),
   };
 
   const urlResolver = new URLResolver(vfs);

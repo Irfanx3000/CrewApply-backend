@@ -30,6 +30,8 @@ router.get('/profile',        authenticate,                                     
 router.patch('/profile',      authenticate, validate(userValidation.updateProfile),                     userController.updateProfile);
 router.patch('/profile-photo',authenticate, profileUpload.single('file'),                               documentController.uploadProfilePhoto);
 router.patch('/maritime-profile', authenticate, validate(userValidation.updateMaritimeProfile),         userController.updateMaritimeProfile);
+router.get('/preferences',    authenticate,                                                              userController.getPreferences);
+router.patch('/preferences',  authenticate, validate(userValidation.updatePreferences),                 userController.updatePreferences);
 
 // ── Resume ────────────────────────────────────────────────────────────────────
 

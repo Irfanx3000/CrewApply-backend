@@ -1,6 +1,7 @@
 'use strict';
 
 const User = require('../models/user.model');
+const JobTaxonomy = require('../models/jobTaxonomy.model');
 const asyncHandler = require('../utils/asyncHandler');
 const { successResponse } = require('../utils/apiResponse');
 const { AUTH_MESSAGES } = require('../constants/messages');
@@ -146,4 +147,40 @@ const updateMaritimeProfile = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { getProfile, updateProfile, updateMaritimeProfile };
+// ── GET /user/preferences ─────────────────────────────────────────────────────
+
+const getPreferences = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id).select('+preferredCategories');
+
+  return successResponse(res, 'Preferences fetched successfully.', {
+    preferredCategories: user.preferredCategories || [],
+  });
+});
+
+// ── PATCH /user/preferences ───────────────────────────────────────────────────
+
+const updatePreferences = asyncHandler(async (req, res) => {
+  const requested = req.body.preferredCategories || [];
+
+  // Silently drop anything that isn't a currently-active category name rather
+  // than hard-erroring — the mobile app's category list is fetched live but
+  // could still be a request or two stale (an admin just deactivated one).
+  const validCategories = await JobTaxonomy.find({ type: 'category', isActive: true }).distinct('name');
+  const preferredCategories = requested.filter((c) => validCategories.includes(c));
+
+  const user = await User.findByIdAndUpdate(
+    req.user._id,
+    { $set: { preferredCategories } },
+    { new: true, select: '+preferredCategories' }
+  );
+
+  if (!user) {
+    throw new AppError(AUTH_MESSAGES.UNAUTHORIZED, HTTP_STATUS.UNAUTHORIZED, 'UNAUTHORIZED');
+  }
+
+  return successResponse(res, 'Preferences updated successfully.', {
+    preferredCategories: user.preferredCategories,
+  });
+});
+
+module.exports = { getProfile, updateProfile, updateMaritimeProfile, getPreferences, updatePreferences };

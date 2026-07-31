@@ -19,7 +19,12 @@ const Plan = require('../models/plan.model');
 const FEATURES = {
   start: ['Apply to 10 jobs / month', 'Access to basic cruise jobs', 'Job alerts (App)', 'Standard application support'],
   premium: ['Apply to 20 jobs/month', 'Access to premium cruise jobs', 'Job alerts (Email + App)', 'Priority application support'],
-  elite: ['Unlimited job applications', 'Job alerts (All Channels)', 'Priority support (WhatsApp)', 'Early access to new jobs'],
+  // 'Job alerts (All Channels)' was corrected to 'Email + App' — the code
+  // sends Elite the exact same notification channels as Premium (see
+  // notification.service.js#notifyEligibleUsersForJob), so the old copy
+  // promised a channel that doesn't exist. Elite still differentiates via
+  // the unlimited application cap above.
+  elite: ['Unlimited job applications', 'Job alerts (Email + App)', 'Priority support (WhatsApp)', 'Early access to new jobs'],
 };
 
 const META = {

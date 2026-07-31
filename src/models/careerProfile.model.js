@@ -29,7 +29,18 @@ const experienceEntrySchema = new mongoose.Schema(
     startDate: { type: Date, default: null },
     endDate: { type: Date, default: null },
     isCurrent: { type: Boolean, default: false },
-    responsibilities: { type: [String], default: [] },
+    // Array-of-String has no native per-item `maxlength` option in Mongoose
+    // — enforced here instead, mirroring careerProfile.validation.js's
+    // express-validator check (defense-in-depth, same as every other field
+    // in this schema pairing a maxlength with a validation-layer check).
+    responsibilities: {
+      type: [String],
+      default: [],
+      validate: {
+        validator: (arr) => arr.length <= 15 && arr.every((item) => typeof item === 'string' && item.length <= 300),
+        message: 'Each responsibility must be at most 300 characters, and at most 15 responsibilities are allowed.',
+      },
+    },
     location: { type: String, trim: true, default: null, maxlength: 150 },
   },
   { timestamps: true }

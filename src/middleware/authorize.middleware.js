@@ -3,6 +3,7 @@
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
+const { ROLES } = require('../constants/roles');
 
 /**
  * Role-based access control middleware.
@@ -25,7 +26,12 @@ const authorize = (...roles) => {
       return next(new AppError(AUTH_MESSAGES.UNAUTHORIZED, HTTP_STATUS.UNAUTHORIZED, 'UNAUTHORIZED'));
     }
 
-    if (!roles.includes(req.user.role)) {
+    // A promoted user (isAdmin: true) keeps their original role (seafarer/
+    // recruiter) for mobile-app purposes but should still pass any admin-only
+    // gate here, same as a role: ROLES.ADMIN account.
+    const hasAdminOverride = roles.includes(ROLES.ADMIN) && req.user.isAdmin === true;
+
+    if (!roles.includes(req.user.role) && !hasAdminOverride) {
       return next(new AppError(AUTH_MESSAGES.FORBIDDEN, HTTP_STATUS.FORBIDDEN, 'FORBIDDEN'));
     }
 

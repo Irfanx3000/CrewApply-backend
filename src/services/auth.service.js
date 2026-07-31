@@ -10,7 +10,7 @@ const { OTP_PURPOSES } = require('../constants/otp');
 const { generateTokenPair, hashToken } = require('../utils/crypto.util');
 const { validateStrength, assertPasswordChanged } = require('./password.service');
 const { signAccessToken, createRefreshToken, rotateRefreshToken, validateRefreshToken, revokeRefreshToken, revokeAllRefreshTokens } = require('./token.service');
-const { sendVerificationEmail, sendPasswordResetEmail, sendOtpEmail } = require('./email.service');
+const { sendVerificationEmail, sendPasswordResetOtpEmail, sendOtpEmail } = require('./email.service');
 const { verifyGoogleIdToken } = require('./oAuth.service');
 const { createOtp, verifyOtp, clearOtp } = require('./otp.service');
 const auditService = require('./audit.service');
@@ -253,6 +253,8 @@ const verifyMobile = async ({ email, otp }, req) => {
       phone: user.phone,
       role: user.role,
       onboardingCompleted: user.onboardingCompleted,
+      isAdmin: user.isAdmin,
+      permissions: user.permissions ?? null,
     },
   };
 };
@@ -377,6 +379,8 @@ const login = async ({ identifier, password }, req) => {
       phone: user.phone,
       role: user.role,
       onboardingCompleted: user.onboardingCompleted,
+      isAdmin: user.isAdmin,
+      permissions: user.permissions ?? null,
     },
   };
 };
@@ -422,39 +426,33 @@ const forgotPassword = async (email, req) => {
   const context = extractContext(req);
 
   const user = await User.findOne({ email });
-  if (!user) return;
+  if (!user) return; // deliberately silent — no account enumeration
 
-  const { rawToken, hashedToken } = generateTokenPair(32);
-  const expiryHours = config.security.passwordResetExpiryHours;
-
-  user.passwordResetTokenHash = hashedToken;
-  user.passwordResetTokenExpiry = new Date(Date.now() + expiryHours * 60 * 60 * 1000);
-  await user.save({ validateBeforeSave: false });
-
-  sendPasswordResetEmail({ to: user.email, name: user.name, token: rawToken }).catch((err) => {
+  const rawOtp = await createOtp(email, OTP_PURPOSES.PASSWORD_RESET);
+  sendPasswordResetOtpEmail({ to: user.email, name: user.name, otp: rawOtp }).catch((err) => {
     console.error('AuthService.forgotPassword: email send failed:', err.message);
   });
 
   await auditService.log({ event: AUDIT_EVENTS.PASSWORD_RESET_REQUESTED, userId: user._id, ...context });
 };
 
-const resetPassword = async ({ token, newPassword }, req) => {
+const resetPasswordWithOtp = async ({ email, otp, newPassword }, req) => {
   validateStrength(newPassword);
 
-  const tokenHash = hashToken(token);
+  // Verify the OTP before looking the user up — an email that was never sent
+  // an OTP (e.g. it doesn't belong to an account, matching forgotPassword's
+  // own silent no-enumeration behavior) naturally fails here with the same
+  // OTP_NOT_FOUND error verifyOtp already produces for any other invalid code,
+  // rather than a separate "no such account" check that would leak which
+  // emails are registered.
+  await verifyOtp(email, otp, OTP_PURPOSES.PASSWORD_RESET);
 
-  const user = await User.findOne({
-    passwordResetTokenHash: tokenHash,
-    passwordResetTokenExpiry: { $gt: new Date() },
-  }).select('+passwordResetTokenHash +passwordResetTokenExpiry +password');
-
+  const user = await User.findOne({ email }).select('+password');
   if (!user) {
-    throw new AppError(AUTH_MESSAGES.INVALID_RESET_TOKEN, HTTP_STATUS.BAD_REQUEST, 'INVALID_TOKEN');
+    throw new AppError(AUTH_MESSAGES.USER_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'USER_NOT_FOUND');
   }
 
   user.password = newPassword;
-  user.passwordResetTokenHash = undefined;
-  user.passwordResetTokenExpiry = undefined;
   await user.save();
 
   await revokeAllRefreshTokens(user._id);
@@ -533,7 +531,14 @@ const googleAuth = async (idToken, req) => {
   return {
     accessToken,
     refreshToken,
-    user: { id: user._id, name: user.name, email: user.email, role: user.role },
+    user: {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      isAdmin: user.isAdmin,
+      permissions: user.permissions ?? null,
+    },
     isNewUser,
   };
 };
@@ -549,7 +554,7 @@ module.exports = {
   logout,
   logoutAll,
   forgotPassword,
-  resetPassword,
+  resetPasswordWithOtp,
   changePassword,
   googleAuth,
 };

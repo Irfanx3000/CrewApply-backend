@@ -5,13 +5,14 @@ const router = express.Router();
 
 const authenticate = require('../middleware/auth.middleware');
 const authorize = require('../middleware/authorize.middleware');
+const requireSection = require('../middleware/requireSection.middleware');
 const validate = require('../middleware/validate.middleware');
 const { bannerImageUpload } = require('../middleware/upload.middleware');
 const { ROLES } = require('../constants/roles');
 const adminBannerController = require('../controllers/adminBanner.controller');
 const bannerValidation = require('../validations/banner.validation');
 
-router.use(authenticate, authorize(ROLES.ADMIN));
+router.use(authenticate, authorize(ROLES.ADMIN), requireSection('banners'));
 
 router.get('/', adminBannerController.listAdminBanners);
 router.post('/', validate(bannerValidation.createBanner), adminBannerController.createBanner);

@@ -11,7 +11,7 @@ const razorpayService = require('./razorpay.service');
 const paymentService = require('./payment.service');
 const pricingSettingService = require('./pricingSetting.service');
 const notificationService = require('./notification.service');
-const resendService = require('./resend.service');
+const emailService = require('./email.service');
 const auditService = require('./audit.service');
 const AppError = require('../utils/AppError');
 const { config } = require('../config');
@@ -405,9 +405,11 @@ const activateBooking = async (payment, { gatewayPaymentId = null, signature = n
 
   audit(AUDIT_EVENTS.PAYMENT_SUCCEEDED, paid.user, req, { orderId: paid.gatewayOrderId, amount: paid.amount });
 
-  User.findById(paid.user)
-    .select('name')
-    .then((purchaser) => {
+  Promise.all([
+    User.findById(paid.user).select('name email'),
+    ConsultancySlot.findById(paid.consultancySlot).select('date startTime').lean(),
+  ])
+    .then(([purchaser, slot]) => {
       if (!purchaser) return;
       notificationService.notifyAdmins({
         type: notificationService.NOTIFICATION_TYPES.CONSULTANCY_BOOKING_CREATED,
@@ -415,6 +417,21 @@ const activateBooking = async (payment, { gatewayPaymentId = null, signature = n
         body: `${purchaser.name} booked a consultancy session (${paid.consultancyTopic}).`,
         data: { bookingId: booking._id },
       });
+
+      // Fire-and-forget, same non-blocking contract as the notification
+      // above — confirms receipt immediately; sendConsultancyBookingStatusEmail
+      // sends a second email once an admin actually confirms/rejects it.
+      if (purchaser.email && slot) {
+        emailService
+          .sendConsultancyBookingReceivedEmail({
+            to: purchaser.email,
+            name: purchaser.name,
+            topic: paid.consultancyTopic,
+            slotDate: slot.date,
+            slotTime: slot.startTime,
+          })
+          .catch(() => {});
+      }
     })
     .catch(() => {});
 
@@ -555,16 +572,9 @@ const updateBookingStatus = async (id, { status, note }, adminId, req) => {
     // Fire-and-forget, same contract as adminApplication.controller.js's
     // status email — must never block or fail the status-update response.
     if (user.email) {
-      const subject = isConfirmed
-        ? 'Your CrewApply consultancy session is confirmed'
-        : 'Update on your CrewApply consultancy booking';
-      const html = `
-        <div style="font-family: Arial, Helvetica, sans-serif; max-width: 480px; margin: 0 auto; color: #1E1E1E;">
-          <h2 style="color: #0D3E85;">${subject}</h2>
-          ${note ? `<p>${note.replace(/\n/g, '<br/>')}</p>` : ''}
-        </div>
-      `;
-      resendService.send({ to: user.email, subject, html }).catch(() => {});
+      emailService
+        .sendConsultancyBookingStatusEmail({ to: user.email, name: user.name, isConfirmed, note })
+        .catch(() => {});
     }
   }
 
