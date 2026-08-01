@@ -118,12 +118,25 @@ const parseCsvFilter = (value) => {
   return tokens.length > 1 ? { $in: tokens } : tokens[0];
 };
 
+// This user's own "hide notifications older than N days" preference (see
+// User.notificationExpiryDays) — a query-time filter, NOT the actual DB TTL
+// cleanup (that's a fixed 15-day ceiling shared by everyone, see
+// notification.model.js). Defaults to 10 for every user (admins included —
+// they have no UI to change this), matching the app's pre-existing 10-day
+// behavior exactly, so this is a no-op change for anyone who hasn't opted
+// into a shorter/longer window.
+const getExpiryCutoff = async (userId) => {
+  const user = await User.findById(userId).select('notificationExpiryDays');
+  const expiryDays = user?.notificationExpiryDays ?? 10;
+  return new Date(Date.now() - expiryDays * 24 * 60 * 60 * 1000);
+};
+
 const listForUser = async (userId, { page = 1, limit = 20, type } = {}) => {
   const pageNum = Math.max(parseInt(page, 10) || 1, 1);
   const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 50);
   const skip = (pageNum - 1) * limitNum;
 
-  const filter = { user: userId };
+  const filter = { user: userId, createdAt: { $gte: await getExpiryCutoff(userId) } };
   if (type) filter.type = parseCsvFilter(type);
 
   const [notifications, total] = await Promise.all([
@@ -135,7 +148,7 @@ const listForUser = async (userId, { page = 1, limit = 20, type } = {}) => {
 };
 
 const getUnreadCount = async (userId, { type } = {}) => {
-  const filter = { user: userId, read: false };
+  const filter = { user: userId, read: false, createdAt: { $gte: await getExpiryCutoff(userId) } };
   if (type) filter.type = parseCsvFilter(type);
   return Notification.countDocuments(filter);
 };
@@ -144,11 +157,39 @@ const getUnreadCount = async (userId, { type } = {}) => {
 // Subscriptions/Consultancy each show their own unread count) — one grouped
 // query instead of one countDocuments() per section.
 const getUnreadCountsByType = async (userId) => {
+  const cutoff = await getExpiryCutoff(userId);
   const rows = await Notification.aggregate([
-    { $match: { user: new mongoose.Types.ObjectId(String(userId)), read: false } },
+    { $match: { user: new mongoose.Types.ObjectId(String(userId)), read: false, createdAt: { $gte: cutoff } } },
     { $group: { _id: '$type', count: { $sum: 1 } } },
   ]);
   return Object.fromEntries(rows.map((r) => [r._id, r.count]));
+};
+
+const getNotificationSettings = async (userId) => {
+  const user = await User.findById(userId).select('notificationExpiryDays pushNotificationsEnabled');
+  return {
+    notificationExpiryDays: user?.notificationExpiryDays ?? 10,
+    pushNotificationsEnabled: user?.pushNotificationsEnabled ?? true,
+  };
+};
+
+// Both fields are optional so the mobile settings screen can send just the
+// one the user actually changed — see notification.validation.js's
+// updateSettings, which allows either/both.
+const updateNotificationSettings = async (userId, { notificationExpiryDays, pushNotificationsEnabled } = {}) => {
+  const update = {};
+  if (notificationExpiryDays !== undefined) update.notificationExpiryDays = notificationExpiryDays;
+  if (pushNotificationsEnabled !== undefined) update.pushNotificationsEnabled = pushNotificationsEnabled;
+
+  const user = await User.findByIdAndUpdate(
+    userId,
+    { $set: update },
+    { new: true, select: 'notificationExpiryDays pushNotificationsEnabled' }
+  );
+  return {
+    notificationExpiryDays: user.notificationExpiryDays,
+    pushNotificationsEnabled: user.pushNotificationsEnabled,
+  };
 };
 
 const markRead = async (userId, notificationId) => {
@@ -194,6 +235,8 @@ module.exports = {
   getUnreadCountsByType,
   markRead,
   markAllRead,
+  getNotificationSettings,
+  updateNotificationSettings,
   registerDeviceToken,
   deregisterDeviceToken,
   NOTIFICATION_TYPES: Notification.NOTIFICATION_TYPES,

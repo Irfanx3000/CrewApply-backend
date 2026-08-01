@@ -5,6 +5,7 @@ require('dotenv').config();
 const { validateEnv, config } = require('./src/config');
 const app = require('./app');
 const connectDB = require('./src/config/db');
+const subscriptionExpiryJob = require('./src/jobs/subscriptionExpiry.job');
 
 const startServer = async () => {
   try {
@@ -12,6 +13,7 @@ const startServer = async () => {
     validateEnv();
 
     await connectDB();
+    subscriptionExpiryJob.start();
 
     app.listen(config.port, () => {
       console.log('===========================================');

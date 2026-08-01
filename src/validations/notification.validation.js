@@ -38,6 +38,11 @@ const deregisterDeviceToken = [
   body('token').notEmpty().withMessage('token is required.'),
 ];
 
+const updateSettings = [
+  body('notificationExpiryDays').optional().isIn([5, 10, 15]).withMessage('notificationExpiryDays must be 5, 10, or 15.'),
+  body('pushNotificationsEnabled').optional().isBoolean().withMessage('pushNotificationsEnabled must be a boolean.'),
+];
+
 module.exports = {
   listQuery,
   unreadCountQuery,
@@ -45,4 +50,5 @@ module.exports = {
   idParam,
   registerDeviceToken,
   deregisterDeviceToken,
+  updateSettings,
 };

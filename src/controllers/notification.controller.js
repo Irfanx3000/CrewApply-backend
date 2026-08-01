@@ -48,6 +48,16 @@ const deregisterDeviceToken = asyncHandler(async (req, res) => {
   return successResponse(res, AUTH_MESSAGES.DEVICE_TOKEN_REMOVED);
 });
 
+const getNotificationSettings = asyncHandler(async (req, res) => {
+  const settings = await notificationService.getNotificationSettings(req.user._id);
+  return successResponse(res, AUTH_MESSAGES.NOTIFICATION_SETTINGS_FETCHED, settings);
+});
+
+const updateNotificationSettings = asyncHandler(async (req, res) => {
+  const settings = await notificationService.updateNotificationSettings(req.user._id, req.body);
+  return successResponse(res, AUTH_MESSAGES.NOTIFICATION_SETTINGS_UPDATED, settings);
+});
+
 module.exports = {
   listNotifications,
   getUnreadCount,
@@ -56,4 +66,6 @@ module.exports = {
   markAllAsRead,
   registerDeviceToken,
   deregisterDeviceToken,
+  getNotificationSettings,
+  updateNotificationSettings,
 };

@@ -38,6 +38,13 @@ const subscriptionSchema = new mongoose.Schema(
     },
 
     autoRenew: { type: Boolean, default: false }, // reserved for a future recurring model
+
+    // Set once the "expiring soon" reminder has been sent for THIS billing
+    // period (see src/jobs/subscriptionExpiry.job.js) — prevents the daily
+    // cron from re-notifying the same user every day inside the renewal
+    // window. Reset never happens automatically; a new period comes from a
+    // new Subscription document (see createOrder), not a mutation of this one.
+    renewalNotifiedAt: { type: Date, default: null },
   },
   {
     timestamps: true,

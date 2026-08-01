@@ -33,5 +33,11 @@ router.delete(
   validate(notificationValidation.deregisterDeviceToken),
   notificationController.deregisterDeviceToken
 );
+router.get('/settings', notificationController.getNotificationSettings);
+router.patch(
+  '/settings',
+  validate(notificationValidation.updateSettings),
+  notificationController.updateNotificationSettings
+);
 
 module.exports = router;

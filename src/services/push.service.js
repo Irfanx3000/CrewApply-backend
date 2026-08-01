@@ -66,7 +66,8 @@ const sendToUser = async (userId, { title, body, data }) => {
     const firebaseApp = getApp();
     if (!firebaseApp) return; // not configured — silent no-op
 
-    const user = await User.findById(userId).select('+deviceTokens');
+    const user = await User.findById(userId).select('+deviceTokens +pushNotificationsEnabled');
+    if (user?.pushNotificationsEnabled === false) return; // opted out — in-app record still exists
     const tokens = (user?.deviceTokens || []).map((d) => d.token);
     if (!tokens.length) return;
 

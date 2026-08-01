@@ -356,6 +356,28 @@ const userSchema = new mongoose.Schema(
       select: false,
     },
 
+    // How many days a notification stays visible to this user before the
+    // read endpoints (notification.service.js) filter it out. The actual DB
+    // TTL cleanup (notification.model.js) is a fixed 15-day ceiling shared by
+    // everyone — this is the per-user "disappears sooner" preference layered
+    // on top via a query-time filter, not real per-user deletion.
+    notificationExpiryDays: {
+      type: Number,
+      enum: [5, 10, 15],
+      default: 10,
+      select: false,
+    },
+
+    // Only gates the FCM push itself (see push.service.js's sendToUser) —
+    // the in-app Notification record is always created regardless, so
+    // turning this off never hides anything from the Notifications screen,
+    // it only silences the system pop-up/banner.
+    pushNotificationsEnabled: {
+      type: Boolean,
+      default: true,
+      select: false,
+    },
+
     // ── Push notifications ─────────────────────────────────────────────────────
     // Array (not a single field) — a user may be logged in on multiple devices.
     // Internal plumbing, never needed in profile responses.

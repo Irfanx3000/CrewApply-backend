@@ -16,6 +16,7 @@ const NOTIFICATION_TYPES = Object.freeze({
   CONSULTANCY_BOOKING_REJECTED: 'CONSULTANCY_BOOKING_REJECTED',
   SUPPORT_INQUIRY_CREATED: 'SUPPORT_INQUIRY_CREATED',
   SUPPORT_INQUIRY_UPDATED: 'SUPPORT_INQUIRY_UPDATED',
+  SUBSCRIPTION_EXPIRING: 'SUBSCRIPTION_EXPIRING',
 });
 
 const notificationSchema = new mongoose.Schema(
@@ -80,8 +81,17 @@ notificationSchema.index({ user: 1, createdAt: -1 });
 // Fast unread-count lookups.
 notificationSchema.index({ user: 1, read: 1 });
 
-// Auto-delete after 10 days so the collection never accumulates junk.
-notificationSchema.index({ createdAt: 1 }, { expireAfterSeconds: 10 * 24 * 60 * 60 });
+// Outer safety-net ceiling, NOT the actual per-user expiry — MongoDB TTL
+// indexes are collection-wide (one duration for everyone), so this can't
+// enforce each user's own 5/10/15-day preference directly. Set to 15 (the
+// longest option) so nothing is ever physically deleted before a user who
+// chose the longest window would expect; the real per-user "disappears
+// sooner" behavior is a query-time filter in notification.service.js
+// (listForUser/getUnreadCount/getUnreadCountsByType), driven by
+// User.notificationExpiryDays. Bumped from 10 — changing this value alone
+// does NOT alter an already-existing index on a live database; it must be
+// dropped/recreated there too (see the deployment note in the PR/plan).
+notificationSchema.index({ createdAt: 1 }, { expireAfterSeconds: 15 * 24 * 60 * 60 });
 
 module.exports = mongoose.model('Notification', notificationSchema);
 module.exports.NOTIFICATION_TYPES = NOTIFICATION_TYPES;

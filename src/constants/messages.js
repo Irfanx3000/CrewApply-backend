@@ -251,6 +251,8 @@ const AUTH_MESSAGES = Object.freeze({
   UNREAD_COUNTS_BY_TYPE_FETCHED: 'Unread counts fetched successfully.',
   DEVICE_TOKEN_REGISTERED: 'Device registered for push notifications.',
   DEVICE_TOKEN_REMOVED: 'Device removed from push notifications.',
+  NOTIFICATION_SETTINGS_FETCHED: 'Notification settings fetched successfully.',
+  NOTIFICATION_SETTINGS_UPDATED: 'Notification settings updated successfully.',
 
   // Document Types
   DOCUMENT_TYPE_CREATED: 'Document type created successfully.',
