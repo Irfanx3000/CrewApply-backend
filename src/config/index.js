@@ -131,6 +131,13 @@ const config = {
       windowMs: 60 * 1000,
       max: 30,
     },
+    // Unauthenticated support submissions (POST /support/public) — no
+    // per-account throttle to fall back on since there's no session, so
+    // this stays tight relative to the authenticated support endpoint.
+    supportPublic: {
+      windowMs: 15 * 60 * 1000,
+      max: 5,
+    },
   },
 
   cors: {

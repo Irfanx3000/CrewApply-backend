@@ -89,4 +89,23 @@ const searchLimiter = createLimiter({
   message: 'Too many search requests. Please slow down.',
 });
 
-module.exports = { authLimiter, otpLimiter, passwordResetLimiter, paymentLimiter, generalLimiter, searchLimiter };
+/**
+ * Applied to the unauthenticated support endpoint (POST /support/public).
+ * No session to key throttling off of, so this is tighter than the
+ * authenticated support path — 5 submissions per 15 minutes per IP.
+ */
+const supportPublicLimiter = createLimiter({
+  windowMs: config.rateLimit.supportPublic.windowMs,
+  max: config.rateLimit.supportPublic.max,
+  message: 'Too many support requests. Please wait before trying again.',
+});
+
+module.exports = {
+  authLimiter,
+  otpLimiter,
+  passwordResetLimiter,
+  paymentLimiter,
+  generalLimiter,
+  searchLimiter,
+  supportPublicLimiter,
+};

@@ -10,7 +10,29 @@ const STATUSES = Object.freeze(['new', 'in_progress', 'resolved']);
 // (higher tier surfaces first), then oldest-first within the same tier.
 const supportInquirySchema = new mongoose.Schema(
   {
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    // Optional — a public/unauthenticated submission (see `source` below) may
+    // not match any account at all, or may match one found by email lookup.
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: false, default: null, index: true },
+
+    // 'public' = submitted via the unauthenticated /support/public endpoint
+    // (e.g. a blocked/logged-out user, or the Auth-stack Help & Support menu).
+    source: {
+      type: String,
+      enum: ['authenticated', 'public'],
+      default: 'authenticated',
+    },
+
+    // Snapshot (at submission time) of the matched account's status, when a
+    // public submission's email matched an existing user — lets the admin
+    // list flag "this query is from a blocked account" at a glance without a
+    // live join. Same reasoning as subscriptionTierSnapshot below. Null when
+    // authenticated (the submitter is by definition active) or when a public
+    // submission's email matched no account.
+    accountStatusSnapshot: {
+      type: String,
+      enum: { values: ['active', 'blocked', 'deleted', null], message: 'Invalid account status snapshot.' },
+      default: null,
+    },
 
     // Captured from the submission form, not re-read off the User document —
     // the user is explicitly allowed to edit these before submitting (e.g. an

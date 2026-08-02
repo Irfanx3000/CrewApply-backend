@@ -13,6 +13,7 @@ router.use(authenticate);
 
 router.get('/availability', validate(consultancyValidation.getAvailabilityQuery), consultancyController.getAvailability);
 router.get('/slots', validate(consultancyValidation.getSlotsQuery), consultancyController.getSlotsForDate);
+router.get('/fee', consultancyController.getFee);
 
 router.post(
   '/order',

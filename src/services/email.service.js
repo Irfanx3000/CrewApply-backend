@@ -12,6 +12,7 @@ const consultancyBookingStatusEmail = require('../emails/templates/consultancyBo
 const subscriptionSuccessEmail = require('../emails/templates/subscriptionSuccessEmail');
 const consultancyBookingReceivedEmail = require('../emails/templates/consultancyBookingReceivedEmail');
 const { STATUS_NOTIFICATION_COPY } = require('../constants/applicationStatusCopy');
+const { TOPIC_LABELS } = require('../constants/consultancy');
 
 /**
  * Core send function shared by all email helpers below — every transactional
@@ -132,19 +133,26 @@ const sendJobAlertEmail = async (to, job) => {
 
 /**
  * Sends the consultancy booking confirmed/rejected email — triggered when an
- * admin resolves an "awaiting_confirmation" booking.
+ * admin resolves an "awaiting_confirmation" booking. `slotDate`/`slotTime`
+ * are optional (a slot that's already been deleted somehow shouldn't block
+ * the email) — the template just omits the details box if either is missing.
  *
- * @param {{ to: string, name: string, isConfirmed: boolean, note?: string }} params
+ * @param {{ to: string, name: string, isConfirmed: boolean, note?: string, topic?: string, slotDate?: Date, slotTime?: string }} params
  */
-const sendConsultancyBookingStatusEmail = async ({ to, name, isConfirmed, note }) => {
+const sendConsultancyBookingStatusEmail = async ({ to, name, isConfirmed, note, topic, slotDate, slotTime }) => {
   const title = isConfirmed
     ? 'Your CrewApply consultancy session is confirmed'
     : 'Update on your CrewApply consultancy booking';
 
+  const topicLabel = topic ? (TOPIC_LABELS[topic] || topic) : null;
+  const formattedSlot = slotDate && slotTime
+    ? `${new Date(slotDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} at ${slotTime}`
+    : null;
+
   await sendEmail({
     to,
     subject: title,
-    html: consultancyBookingStatusEmail({ name, isConfirmed, note }),
+    html: consultancyBookingStatusEmail({ name, isConfirmed, note, topicLabel, formattedSlot }),
   });
 };
 

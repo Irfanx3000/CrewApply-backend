@@ -12,6 +12,17 @@ const CONSULTANCY_TOPICS = Object.freeze([
   'sea_time',
 ]);
 
+// Human-readable labels for the status-change email (server-rendered, no
+// i18n there) — mirrors CrewApply-admin/src/pages/Consultancy/consultancy.constants.js's
+// TOPIC_LABELS so wording stays consistent between the admin UI and the email.
+const TOPIC_LABELS = Object.freeze({
+  career_guidance: 'Career Guidance & Advice',
+  resume_review: 'Resume & CV Review',
+  interview_prep: 'Interview Preparation',
+  visa_support: 'Visa & Documents Support',
+  sea_time: 'Sea Time Calculation',
+});
+
 // Index-matches Date#getUTCDay() (0=Sunday..6=Saturday) — the canonical
 // weekday-key ordering shared by ConsultancyWeeklySchedule.schedule and the
 // mobile app's own consultancy.weekdays.* i18n keys.
@@ -76,6 +87,7 @@ const expandRangeToStartTimes = (range, intervalMinutes) => {
 
 module.exports = {
   CONSULTANCY_TOPICS,
+  TOPIC_LABELS,
   WEEKDAY_KEYS,
   ALLOWED_SLOT_INTERVALS,
   DEFAULT_SLOT_INTERVAL_MINUTES,

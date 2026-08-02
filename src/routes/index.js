@@ -33,8 +33,10 @@ const searchRoutes = require('./search.routes');
 const adminSearchRoutes = require('./adminSearch.routes');
 const consultancyRoutes = require('./consultancy.routes');
 const adminConsultancyRoutes = require('./adminConsultancy.routes');
+const walletRoutes = require('./wallet.routes');
 const supportInquiryRoutes = require('./supportInquiry.routes');
 const adminSupportInquiryRoutes = require('./adminSupportInquiry.routes');
+const geoRoutes = require('./geo.routes');
 const { API_PREFIX } = require('../constants/api.endpoints');
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
@@ -84,8 +86,10 @@ const setupRoutes = (app) => {
   app.use(`${API_PREFIX}/search`, searchRoutes);
   app.use(`${API_PREFIX}/consultancy`, consultancyRoutes);
   app.use(`${API_PREFIX}/admin/consultancy`, adminConsultancyRoutes);
+  app.use(`${API_PREFIX}/wallet`, walletRoutes);
   app.use(`${API_PREFIX}/support`, supportInquiryRoutes);
   app.use(`${API_PREFIX}/admin/support`, adminSupportInquiryRoutes);
+  app.use(`${API_PREFIX}/geo`, geoRoutes);
 
   // 404 handler — must be registered after all valid routes.
   app.use((req, res, next) => {

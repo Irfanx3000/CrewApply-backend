@@ -335,7 +335,7 @@ const login = async ({ identifier, password }, req) => {
   }
 
   if (!user.isActive) {
-    throw new AppError(AUTH_MESSAGES.ACCOUNT_INACTIVE, HTTP_STATUS.FORBIDDEN, 'ACCOUNT_INACTIVE');
+    throw new AppError(AUTH_MESSAGES.ACCOUNT_BLOCKED, HTTP_STATUS.FORBIDDEN, 'ACCOUNT_BLOCKED', { blockedReason: user.blockedReason || null });
   }
 
   if (user.isLocked) {
@@ -522,7 +522,7 @@ const googleAuth = async (idToken, req) => {
   }
 
   if (!user.isActive) {
-    throw new AppError(AUTH_MESSAGES.ACCOUNT_INACTIVE, HTTP_STATUS.FORBIDDEN, 'ACCOUNT_INACTIVE');
+    throw new AppError(AUTH_MESSAGES.ACCOUNT_BLOCKED, HTTP_STATUS.FORBIDDEN, 'ACCOUNT_BLOCKED', { blockedReason: user.blockedReason || null });
   }
 
   const accessToken = signAccessToken(user);

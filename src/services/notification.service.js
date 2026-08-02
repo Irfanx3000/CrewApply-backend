@@ -21,11 +21,21 @@ const { PLAN_TIERS, TIER_RANK } = require('../models/plan.model');
  * The push send is deliberately NOT awaited — it's a network call with
  * unpredictable latency, and blocking the caller's response on it would be
  * a regression (see push.service.js, which itself never throws either).
+ *
+ * Admin-only types (see Notification.ADMIN_ONLY_TYPES) skip the push
+ * entirely — the in-app record is still created (the admin panel reads it
+ * unfiltered), but nothing pushes to a phone. Without this, notifyAdmins()
+ * would push every admin's device for someone else's support ticket / new
+ * signup / new application, etc. — reaching an admin's personal phone with
+ * data about another user's activity regardless of whether the admin panel
+ * is even what they're using at that moment.
  */
 const create = async ({ userId, type, title, body, data = null }) => {
   try {
     const notification = await Notification.create({ user: userId, type, title, body, data });
-    pushService.sendToUser(userId, { title, body, data }).catch(() => {});
+    if (!Notification.ADMIN_ONLY_TYPES.includes(type)) {
+      pushService.sendToUser(userId, { title, body, data }).catch(() => {});
+    }
     return notification;
   } catch (err) {
     console.error('NotificationService: failed to create notification:', err.message);

@@ -42,6 +42,12 @@ const assertConfigured = () => {
  */
 const createOrder = async ({ amount, currency = 'INR', receipt, notes = {} }) => {
   const rzp = assertConfigured();
+  // NOTE: an `expire_by` option was tried here (to make an abandoned order
+  // gateway-unpayable, not just DB-released) but this account's Razorpay
+  // configuration rejects it outright ("expire_by is/are not required and
+  // should not be sent", confirmed via a real API call) — that feature
+  // needs to be enabled by Razorpay support for the merchant account before
+  // it can be used. Removed rather than worked around.
   return rzp.orders.create({
     amount, // paise
     currency,

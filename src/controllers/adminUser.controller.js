@@ -21,7 +21,7 @@ const getUserById = asyncHandler(async (req, res) => {
 });
 
 const updateUserStatus = asyncHandler(async (req, res) => {
-  const user = await adminUserService.setStatus(req.params.id, req.body.status, req.user._id, req);
+  const user = await adminUserService.setStatus(req.params.id, req.body.status, req.body.reason, req.user._id, req);
   return successResponse(res, AUTH_MESSAGES.USER_STATUS_UPDATED, { user });
 });
 

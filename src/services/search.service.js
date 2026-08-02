@@ -32,15 +32,29 @@ const searchUsers = async ({ rx }) => {
   return users.map((u) => ({ id: String(u._id), title: u.name, subtitle: u.email, navigable: true }));
 };
 
-// Jobs already have a Mongo text index (job.model.js) — reuse it here via
-// $text + textScore sort instead of a regex scan, same as the existing
-// job.service.js list endpoints.
-const searchJobs = async ({ term, scope }) => {
-  const filter = { $text: { $search: term } };
+// Jobs have a Mongo text index (job.model.js) too, but $text only matches
+// whole, tokenized (stemmed) words — it can't match a word someone is still
+// typing (e.g. "engi" won't match "Engineer"). That makes it the wrong tool
+// for a live-as-you-type suggestion dropdown, which is exactly how the
+// mobile app's only 'app'-scoped entity is used (JobSearchBar). Matches
+// every other entity handler in this file: a case-insensitive "contains"
+// regex via buildRegex, across the same fields the text index covers.
+const searchJobs = async ({ rx, scope }) => {
+  const filter = {
+    $or: [
+      { title: rx },
+      { companyName: rx },
+      { department: rx },
+      { rank: rx },
+      { vesselType: rx },
+      { 'location.city': rx },
+      { 'location.country': rx },
+    ],
+  };
   if (scope === 'app') filter.status = 'published';
 
-  const jobs = await Job.find(filter, { score: { $meta: 'textScore' } })
-    .sort({ score: { $meta: 'textScore' } })
+  const jobs = await Job.find(filter)
+    .sort({ publishedAt: -1 })
     .select('title companyName status')
     .limit(PER_ENTITY_LIMIT)
     .lean();

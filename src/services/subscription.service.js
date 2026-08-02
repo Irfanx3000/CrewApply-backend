@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const Plan = require('../models/plan.model');
+const { TIER_RANK } = Plan;
 const Payment = require('../models/payment.model');
 const Subscription = require('../models/subscription.model');
 const User = require('../models/user.model');
@@ -103,6 +104,118 @@ const computeAmount = async (plan, userId, region) => {
   return pricing.amount;
 };
 
+// ── Plan switching: proration, period math, scenario classification ──────────
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// Cash-only proration — deliberately computed from the old payment's actual
+// `amount` (real money received), never `amountBeforeCredit`/`walletApplied`.
+// Prorating the wallet-funded portion of a purchase and letting the excess
+// flow back to the wallet would let a user launder wallet credit into MORE
+// wallet credit by switching repeatedly. Ratio is capped at 1 — a renewal
+// that stacked remaining runway onto an earlier payment means some of the
+// current remaining days were actually funded by that earlier payment too;
+// capping at the latest payment's own amount is the safe, conservative
+// choice rather than reconstructing a full multi-payment ledger for this
+// rare case.
+const computeProratedCredit = async (existingActive, oldPlanIntervalDays) => {
+  if (!existingActive?.payment) return 0;
+  const oldPayment = await Payment.findById(existingActive.payment).select('amount status').lean();
+  if (!oldPayment || oldPayment.status !== 'paid' || !(oldPayment.amount > 0)) return 0;
+
+  const daysRemaining = Math.max(0, existingActive.currentPeriodEnd.getTime() - Date.now()) / MS_PER_DAY;
+  const ratio = Math.min(1, daysRemaining / (oldPlanIntervalDays || 30));
+  return Math.round(oldPayment.amount * ratio);
+};
+
+// Shared by the order-creation summary preview AND activate()'s real
+// activation, so what the user is shown before paying always matches what
+// happens after. A switch always starts fresh from today (the old plan's
+// remaining value was already captured as proration credit in the price,
+// so stacking it too would double-count it) — only a genuine same-tier
+// renewal stacks onto the remaining time.
+const computeNewPeriod = (existingActive, plan, isSwitch, now = new Date()) => {
+  const base = (!isSwitch && existingActive && existingActive.currentPeriodEnd > now) ? existingActive.currentPeriodEnd : now;
+  return { start: now, end: new Date(base.getTime() + (plan?.intervalDays || 30) * MS_PER_DAY) };
+};
+
+// Drives the Plan Summary screen's dynamic header/color/copy — computed once
+// server-side so the client never re-derives billing classification itself.
+const classifyScenario = (hasActiveSub, isSameSelection, existingActive, plan, oldPlanIntervalDays) => {
+  if (!hasActiveSub) return 'purchase';
+  if (isSameSelection) return 'renewal';
+  if (existingActive.tier !== plan.tier) {
+    return TIER_RANK[plan.tier] > TIER_RANK[existingActive.tier] ? 'upgrade' : 'downgrade';
+  }
+  // Same tier, different billingCycle (e.g. monthly -> yearly) — tier rank
+  // ties, so classify by which cycle represents more total commitment.
+  return plan.intervalDays > (oldPlanIntervalDays || 0) ? 'upgrade' : 'downgrade';
+};
+
+// Data-driven price breakdown — the mobile PaymentBreakdownRow component
+// renders this array directly, only ever showing lines that actually apply.
+const buildPriceBreakdown = (payment) => {
+  const rows = [{ label: 'Plan Price', amount: payment.amountBeforeCredit, kind: 'charge' }];
+  if (payment.proratedCredit > 0) rows.push({ label: 'Unused Subscription Credit', amount: -payment.proratedCredit, kind: 'credit' });
+  if (payment.walletApplied > 0) rows.push({ label: 'Wallet Balance Used', amount: -payment.walletApplied, kind: 'credit' });
+  rows.push({ label: 'Amount Payable', amount: payment.amount, kind: 'total' });
+  return rows;
+};
+
+// The "Summary Object" the Plan Summary screen renders directly — built from
+// the persisted Payment (source of truth for what will actually be charged/
+// credited) plus a couple of fresh, current-moment reads (remaining days,
+// projected new period) so a summary revisited later still reflects reality.
+const buildSummary = async ({ payment, plan, reused = false, activated = false, subscription = null }) => {
+  const summary = {
+    orderId: payment.gatewayOrderId,
+    payableAmount: payment.amount,
+    currency: payment.currency,
+    keyId: config.razorpay.keyId, // public key only
+    planId: plan.code,
+    planName: plan.name,
+    tier: payment.tier,
+    billingCycle: payment.billingCycle,
+    walletApplied: payment.walletApplied || 0,
+    proratedCredit: payment.proratedCredit || 0,
+    excessProrationCredit: payment.excessProrationCredit || 0,
+    scenario: payment.scenario,
+    priceBreakdown: buildPriceBreakdown(payment),
+    reused,
+    activated,
+  };
+
+  const oldSub = payment.previousSubscription
+    ? await Subscription.findById(payment.previousSubscription).populate('plan')
+    : null;
+
+  if (oldSub) {
+    summary.currentPlan = {
+      tier: oldSub.tier,
+      billingCycle: oldSub.billingCycle,
+      name: oldSub.plan?.name || oldSub.tier,
+      remainingDays: Math.max(0, Math.ceil((oldSub.currentPeriodEnd.getTime() - Date.now()) / MS_PER_DAY)),
+      unusedCredit: payment.proratedCredit || 0,
+    };
+  }
+
+  const { start, end } = computeNewPeriod(oldSub, plan, !!payment.previousSubscription);
+  summary.newPeriodStart = start;
+  summary.newPeriodEnd = end;
+
+  if (activated && subscription) {
+    summary.subscription = {
+      tier: subscription.tier,
+      billingCycle: subscription.billingCycle,
+      currentPeriodEnd: subscription.currentPeriodEnd,
+    };
+    const freshUser = await User.findById(payment.user).select('walletBalance');
+    summary.walletBalanceAfter = freshUser?.walletBalance || 0;
+  }
+
+  return summary;
+};
+
 // ── Create order (with the anti-double-charge guard) ──────────────────────────
 
 const createOrder = async ({ user, tier, billingCycle, applyWalletCredit = true }, req) => {
@@ -139,7 +252,8 @@ const createOrder = async ({ user, tier, billingCycle, applyWalletCredit = true 
     // Not paid → the earlier checkout was abandoned.
     if (openPayment.tier === tier && openPayment.billingCycle === billingCycle) {
       // Same plan → hand back the SAME order (Razorpay refuses to pay it twice).
-      return orderResponse(openPayment, plan, true);
+      const existingPlan = await Plan.findById(openPayment.plan);
+      return buildSummary({ payment: openPayment, plan: existingPlan || plan, reused: true });
     }
     // Different plan → release the abandoned order so a fresh one can be created.
     await Payment.updateOne(
@@ -148,31 +262,113 @@ const createOrder = async ({ user, tier, billingCycle, applyWalletCredit = true 
     );
   }
 
-  // 3) Block buying while an active subscription exists — EXCEPT a genuine renewal:
-  //    same tier, and within the renewal window of expiry. A renewal extends the
-  //    plan (see activate) instead of opening a redundant second subscription.
-  if (user.subscriptionExpiresAt && user.subscriptionExpiresAt > new Date()) {
-    const msLeft = user.subscriptionExpiresAt.getTime() - Date.now();
-    const isRenewal = msLeft <= RENEWAL_WINDOW_MS && user.subscriptionTier === tier;
-    if (!isRenewal) {
-      throw new AppError(AUTH_MESSAGES.ALREADY_SUBSCRIBED, HTTP_STATUS.CONFLICT, 'ALREADY_SUBSCRIBED');
+  // 3) Classify: block ONLY the literal "buy the identical plan you already
+  //    have, too early to renew" case — exactly today's behavior. Any
+  //    genuine tier or billingCycle difference while active is now a SWITCH,
+  //    not a block, priced with prorated credit (see below).
+  const existingActive = await Subscription.findOne({ user: user._id, status: 'active' }).sort({ currentPeriodEnd: -1 });
+  const hasActiveSub = !!(existingActive && existingActive.currentPeriodEnd > new Date());
+  const isSameSelection = hasActiveSub && existingActive.tier === tier && existingActive.billingCycle === billingCycle;
+  let isSwitch = false;
+
+  if (hasActiveSub) {
+    if (isSameSelection) {
+      const isRenewal = (existingActive.currentPeriodEnd.getTime() - Date.now()) <= RENEWAL_WINDOW_MS;
+      if (!isRenewal) {
+        throw new AppError(AUTH_MESSAGES.ALREADY_SUBSCRIBED, HTTP_STATUS.CONFLICT, 'ALREADY_SUBSCRIBED');
+      }
+      // else falls through as today's same-tier renewal path — isSwitch stays false
+    } else {
+      isSwitch = true;
     }
+  }
+
+  let oldPlan = null;
+  if (isSwitch) {
+    oldPlan = await Plan.findById(existingActive.plan).select('intervalDays').lean();
   }
 
   // 4) Server computes the amount — never the client. Region (and therefore
   //    currency) is resolved server-side from the user's own country, also
-  //    never trusted from the client.
-  const amount = await computeAmount(plan, user._id, region);
+  //    never trusted from the client. Switches price at LIST (never stack a
+  //    launch-price discount under proration credit too — that'd be a
+  //    double discount and an incentive to tier-hop for cheap "first
+  //    purchases").
+  const baseAmount = isSwitch ? plan.pricing[region].amount : await computeAmount(plan, user._id, region);
+  const proratedCredit = isSwitch ? await computeProratedCredit(existingActive, oldPlan?.intervalDays) : 0;
+  const excessProrationCredit = isSwitch ? Math.max(0, proratedCredit - baseAmount) : 0;
+  const amountAfterProration = Math.max(0, baseAmount - proratedCredit);
 
-  // 4b) Auto-apply wallet credit (referral rewards) unless the client opts out.
-  // Debit doesn't happen here — an abandoned order must not consume real
-  // credit — it's applied in activate() once the payment is confirmed paid.
-  // MIN_CHARGE keeps Razorpay's own ₹1 minimum-order-amount requirement intact.
+  // 4b) Auto-apply wallet credit (referral rewards) unless the client opts
+  // out. Debit doesn't happen here — an abandoned order must not consume
+  // real credit — it's applied in activate() once the payment is confirmed
+  // paid. Genuinely allowed to reach 0 now (proration + wallet fully
+  // covering the cost) — the spec requires skipping Razorpay entirely in
+  // that case (see below), not forcing a token charge through it. MIN_CHARGE
+  // only matters when SOME real gateway charge remains: if the wallet would
+  // leave a sliver below Razorpay's own practical minimum, hold back just
+  // enough wallet credit to clear it, rather than attempt a sub-minimum order.
   const MIN_CHARGE = 100;
-  const walletApplied = applyWalletCredit ? Math.min(user.walletBalance || 0, Math.max(amount - MIN_CHARGE, 0)) : 0;
-  const chargeable = amount - walletApplied;
+  let walletApplied = applyWalletCredit ? Math.min(user.walletBalance || 0, amountAfterProration) : 0;
+  let chargeable = amountAfterProration - walletApplied;
+  if (chargeable > 0 && chargeable < MIN_CHARGE) {
+    walletApplied = Math.max(0, walletApplied - (MIN_CHARGE - chargeable));
+    chargeable = amountAfterProration - walletApplied;
+  }
 
+  const scenario = classifyScenario(hasActiveSub, isSameSelection, existingActive, plan, oldPlan?.intervalDays);
   const receipt = `rcpt_${crypto.randomBytes(10).toString('hex')}`;
+
+  const paymentFields = {
+    user: user._id,
+    type: 'subscription',
+    plan: plan._id,
+    amount: chargeable,
+    amountBeforeCredit: baseAmount,
+    walletApplied,
+    previousSubscription: isSwitch ? existingActive._id : null,
+    proratedCredit,
+    excessProrationCredit,
+    scenario,
+    currency,
+    tier,
+    billingCycle,
+    receipt,
+  };
+
+  // 5) Persist the Payment. The partial-unique index guarantees only one open
+  //    order per user — a racing request hits E11000 and we reuse the winner.
+  //    `amount` stores the actually-chargeable value (post-credit) so the
+  //    existing webhook amount-match defense and revenue analytics are
+  //    untouched; amountBeforeCredit/walletApplied/proratedCredit record the
+  //    discount itself.
+  if (chargeable === 0) {
+    // Fully covered by proration credit + wallet — per the product spec,
+    // NEVER open Razorpay for a zero-payable order. A synthetic unique
+    // gatewayOrderId still satisfies the schema (required + unique) without
+    // any gateway involved at all.
+    let payment;
+    try {
+      payment = await Payment.create({
+        ...paymentFields,
+        status: 'created',
+        gatewayOrderId: `free_${crypto.randomBytes(10).toString('hex')}`,
+        metadata: {},
+      });
+    } catch (err) {
+      if (err && err.code === 11000) {
+        const existing = await Payment.findOne({ user: user._id, status: 'created' });
+        if (existing) {
+          const existingPlan = await Plan.findById(existing.plan);
+          return buildSummary({ payment: existing, plan: existingPlan || plan, reused: true });
+        }
+      }
+      throw err;
+    }
+    audit(AUDIT_EVENTS.PAYMENT_INITIATED, user._id, req, { orderId: payment.gatewayOrderId, amount: 0, walletApplied, tier, billingCycle });
+    const subscription = await activate(payment, {}, req);
+    return buildSummary({ payment, plan, reused: false, activated: true, subscription });
+  }
 
   const order = await razorpayService.createOrder({
     amount: chargeable,
@@ -181,52 +377,28 @@ const createOrder = async ({ user, tier, billingCycle, applyWalletCredit = true 
     notes: { userId: String(user._id), tier, billingCycle },
   });
 
-  // 5) Persist the Payment. The partial-unique index guarantees only one open
-  //    order per user — a racing request hits E11000 and we reuse the winner.
-  // `amount` stores the actually-chargeable value (post-credit) so the
-  // existing webhook amount-match defense and revenue analytics are untouched;
-  // amountBeforeCredit/walletApplied record the discount itself.
   let payment;
   try {
     payment = await Payment.create({
-      user: user._id,
-      type: 'subscription',
-      plan: plan._id,
-      amount: chargeable,
-      amountBeforeCredit: walletApplied > 0 ? amount : 0,
-      walletApplied,
-      currency,
-      tier,
-      billingCycle,
+      ...paymentFields,
       status: 'created',
       gatewayOrderId: order.id,
-      receipt,
       metadata: { order },
     });
   } catch (err) {
     if (err && err.code === 11000) {
       const existing = await Payment.findOne({ user: user._id, status: 'created' });
-      if (existing) return orderResponse(existing, plan, true);
+      if (existing) {
+        const existingPlan = await Plan.findById(existing.plan);
+        return buildSummary({ payment: existing, plan: existingPlan || plan, reused: true });
+      }
     }
     throw err;
   }
 
   audit(AUDIT_EVENTS.PAYMENT_INITIATED, user._id, req, { orderId: order.id, amount: chargeable, walletApplied, tier, billingCycle });
-  return orderResponse(payment, plan, false);
+  return buildSummary({ payment, plan, reused: false });
 };
-
-const orderResponse = (payment, plan, reused) => ({
-  orderId: payment.gatewayOrderId,
-  amount: payment.amount,
-  currency: payment.currency,
-  keyId: config.razorpay.keyId, // public key only
-  planId: plan.code,
-  planName: plan.name,
-  tier: payment.tier,
-  billingCycle: payment.billingCycle,
-  walletApplied: payment.walletApplied || 0,
-  reused,
-});
 
 // ── Idempotent activation (shared by /verify and the webhook) ─────────────────
 
@@ -251,13 +423,16 @@ const activate = async (payment, { gatewayPaymentId = null, signature = null } =
   const plan = await Plan.findById(paid.plan);
   const now = new Date();
 
-  // Renewal-aware period: if the user still has an unexpired active subscription,
-  // stack the new interval on top of the remaining time instead of throwing days
-  // away; otherwise start from now.
+  // Renewal-aware period: if the user still has an unexpired active
+  // subscription AND this isn't a switch, stack the new interval on top of
+  // the remaining time instead of throwing days away. A switch (identified
+  // by previousSubscription being set) always starts fresh from today — the
+  // old plan's remaining value was already captured as proration credit in
+  // the price at order-creation time, so stacking it too would double-count it.
+  const isSwitch = !!paid.previousSubscription;
   const existingActive = await Subscription.findOne({ user: paid.user, status: 'active' })
     .sort({ currentPeriodEnd: -1 });
-  const base = existingActive && existingActive.currentPeriodEnd > now ? existingActive.currentPeriodEnd : now;
-  const periodEnd = new Date(base.getTime() + (plan?.intervalDays || 30) * 24 * 60 * 60 * 1000);
+  const { end: periodEnd } = computeNewPeriod(existingActive, plan, isSwitch, now);
 
   // Supersede the prior active subscription (renewal replaces it with the extended one).
   await Subscription.updateMany(
@@ -299,6 +474,16 @@ const activate = async (payment, { gatewayPaymentId = null, signature = null } =
       .redeem({ user: paid.user, amount: paid.walletApplied, type: 'redemption', payment: paid._id, description: 'Applied to subscription purchase' })
       .then(() => audit(AUDIT_EVENTS.WALLET_REDEEMED, paid.user, req, { amount: paid.walletApplied, paymentId: paid._id }))
       .catch((err) => console.error('subscription.service.activate: wallet redemption failed (non-fatal):', err.message));
+  }
+
+  // Excess proration credit from a downgrade (the old plan's unused value
+  // exceeded the new plan's entire price) — deposited to the wallet rather
+  // than refunded as cash, since no partial-refund gateway integration
+  // exists here. Same non-blocking, fire-and-forget contract as the debit above.
+  if (paid.excessProrationCredit > 0) {
+    walletService
+      .credit({ user: paid.user, amount: paid.excessProrationCredit, type: 'plan_switch_credit', description: 'Unused credit from switching subscription plans' })
+      .catch((err) => console.error('subscription.service.activate: excess proration credit failed (non-fatal):', err.message));
   }
 
   // Reward the referrer if this is the referee's first-ever paid subscription.

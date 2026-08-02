@@ -44,7 +44,7 @@ const authenticate = asyncHandler(async (req, res, next) => {
     throw new AppError(AUTH_MESSAGES.ACCOUNT_DELETED, HTTP_STATUS.FORBIDDEN, 'ACCOUNT_DELETED');
   }
   if (!user.isActive) {
-    throw new AppError(AUTH_MESSAGES.ACCOUNT_BLOCKED, HTTP_STATUS.FORBIDDEN, 'ACCOUNT_BLOCKED');
+    throw new AppError(AUTH_MESSAGES.ACCOUNT_BLOCKED, HTTP_STATUS.FORBIDDEN, 'ACCOUNT_BLOCKED', { blockedReason: user.blockedReason || null });
   }
 
   req.user = user;

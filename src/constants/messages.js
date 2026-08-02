@@ -134,6 +134,7 @@ const AUTH_MESSAGES = Object.freeze({
 
   // Search
   SEARCH_RESULTS_FETCHED: 'Search results fetched successfully.',
+  CITIES_FETCHED: 'Cities fetched successfully.',
   SEARCH_QUERY_TOO_SHORT: 'Search query must be at least 2 characters.',
 
   // Dashboard
@@ -196,6 +197,7 @@ const AUTH_MESSAGES = Object.freeze({
   CONSULTANCY_CONFIG_FETCHED: 'Consultancy configuration fetched successfully.',
   CONSULTANCY_FEE_UPDATED: 'Consultancy fee updated successfully.',
   CONSULTANCY_AVAILABILITY_FETCHED: 'Availability fetched successfully.',
+  CONSULTANCY_FEE_FETCHED: 'Consultancy fee fetched successfully.',
   CONSULTANCY_SLOTS_FETCHED: 'Slots fetched successfully.',
   CONSULTANCY_SLOT_NOT_AVAILABLE: 'This slot is no longer available. Please choose another.',
   CONSULTANCY_SCHEDULE_UPDATED: 'Weekly availability schedule updated successfully.',
@@ -227,6 +229,9 @@ const AUTH_MESSAGES = Object.freeze({
   INVALID_REFERRAL_CODE: 'This referral code is invalid.',
   SELF_REFERRAL_NOT_ALLOWED: 'You cannot use your own referral code.',
   WALLET_FETCHED: 'Wallet fetched successfully.',
+  WALLET_HISTORY_FETCHED: 'Wallet history fetched successfully.',
+  WALLET_TRANSACTION_FETCHED: 'Wallet transaction fetched successfully.',
+  WALLET_TRANSACTION_NOT_FOUND: 'Wallet transaction not found.',
 
   // Applications
   APPLICATION_SUBMITTED: 'Application submitted successfully.',

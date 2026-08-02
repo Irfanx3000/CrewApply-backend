@@ -19,6 +19,22 @@ const NOTIFICATION_TYPES = Object.freeze({
   SUBSCRIPTION_EXPIRING: 'SUBSCRIPTION_EXPIRING',
 });
 
+// Created via notifyAdmins() — describe someone ELSE's action (a new user
+// registering, a new support ticket, a new application, etc.), never the
+// recipient's own event. These must never reach a mobile push notification,
+// even for an account that also holds the admin role — only the admin PANEL
+// (which reads the in-app list directly, unfiltered) should surface them. A
+// phone push would leak another user's activity onto the admin's lock
+// screen regardless of whether they're currently "in admin mode" on that
+// device. See notification.service.js#create's push gate.
+const ADMIN_ONLY_TYPES = Object.freeze([
+  NOTIFICATION_TYPES.USER_REGISTERED,
+  NOTIFICATION_TYPES.APPLICATION_SUBMITTED,
+  NOTIFICATION_TYPES.CONSULTANCY_BOOKING_CREATED,
+  NOTIFICATION_TYPES.SUBSCRIPTION_PURCHASED,
+  NOTIFICATION_TYPES.SUPPORT_INQUIRY_CREATED,
+]);
+
 const notificationSchema = new mongoose.Schema(
   {
     user: {
@@ -95,3 +111,4 @@ notificationSchema.index({ createdAt: 1 }, { expireAfterSeconds: 15 * 24 * 60 * 
 
 module.exports = mongoose.model('Notification', notificationSchema);
 module.exports.NOTIFICATION_TYPES = NOTIFICATION_TYPES;
+module.exports.ADMIN_ONLY_TYPES = ADMIN_ONLY_TYPES;

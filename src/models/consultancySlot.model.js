@@ -7,9 +7,18 @@ const mongoose = require('mongoose');
 // availability ("is 2pm open on Tuesdays") lives in
 // ConsultancyWeeklySchedule instead; this model only ever needs to track
 // occurrences that are actually occupied (a payment in flight, or a
-// confirmed booking), so its own existence IS the "taken" signal — there is
-// no 'open'/'closed' status to track here anymore.
-const SLOT_STATUSES = Object.freeze(['reserved', 'booked']);
+// confirmed booking) or were once occupied but no longer are.
+//
+// 'released' (added alongside 'reserved'/'booked'): set when an admin
+// rejects the booking that held this slot (see
+// consultancy.service.js#updateBookingStatus). Deliberately NOT deleted —
+// deleting would leave the rejected booking's `.populate('slot')` resolving
+// to null, and presentBooking/presentAdminBooking's ternary would then
+// crash trying to read `._id` off it. A 'released' row is excluded from
+// every "taken" query (getAvailability/getSlotsForDate/claimSlot's CAS all
+// already only special-case 'reserved'/'booked') while still being a real,
+// populatable document for the old booking's historical date/time display.
+const SLOT_STATUSES = Object.freeze(['reserved', 'booked', 'released']);
 
 const consultancySlotSchema = new mongoose.Schema(
   {

@@ -336,6 +336,17 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
+    // Admin's reason for the current block, shown to the user on the
+    // "Account Blocked" screen — cleared automatically whenever setStatus
+    // moves the account off 'blocked' (unblock/delete), so a stale reason
+    // never survives a status change. See adminUser.service.js#setStatus.
+    blockedReason: {
+      type: String,
+      trim: true,
+      maxlength: 250,
+      default: null,
+    },
+
     // ── Saved jobs ──────────────────────────────────────────────────────────────
     // Bookmarked jobs, populated on read. select: false — never needed in
     // profile responses, only via the dedicated saved-jobs endpoints.

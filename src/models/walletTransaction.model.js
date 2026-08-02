@@ -2,10 +2,13 @@
 
 const mongoose = require('mongoose');
 
-// referral_reward — credit, fires when a referred friend's first payment succeeds.
-// redemption      — debit, wallet balance applied toward a subscription purchase.
-// adjustment      — admin manual credit/debit (support cases, goodwill, corrections).
-const WALLET_TRANSACTION_TYPES = Object.freeze(['referral_reward', 'redemption', 'adjustment']);
+// referral_reward    — credit, fires when a referred friend's first payment succeeds.
+// redemption         — debit, wallet balance applied toward a subscription purchase.
+// adjustment         — admin manual credit/debit (support cases, goodwill, corrections).
+// plan_switch_credit — credit, the portion of a plan switch's prorated credit
+//                      that exceeded the new plan's price (see
+//                      subscription.service.js's excessProrationCredit).
+const WALLET_TRANSACTION_TYPES = Object.freeze(['referral_reward', 'redemption', 'adjustment', 'plan_switch_credit']);
 
 const walletTransactionSchema = new mongoose.Schema(
   {
@@ -14,6 +17,20 @@ const walletTransactionSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
       index: true,
+    },
+
+    // Human-readable id, distinct from Mongo's _id — shown to the user on
+    // the transaction detail view (generated in wallet.service.js at
+    // creation, e.g. "WTX-A1B2C3D4E5").
+    referenceId: { type: String, required: true, unique: true },
+
+    // Every transaction today is created already-final — this just gives
+    // the schema room for a future pending/reversed state without any
+    // current caller needing to set it explicitly.
+    status: {
+      type: String,
+      enum: { values: ['completed'], message: 'Invalid wallet transaction status.' },
+      default: 'completed',
     },
 
     type: {

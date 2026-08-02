@@ -18,8 +18,15 @@ const listUsersQuery = [
   query('subscriptionTier').optional().isIn(PLAN_TIERS).withMessage('Invalid subscription tier filter.'),
 ];
 
+const countWords = (str) => String(str || '').trim().split(/\s+/).filter(Boolean).length;
+
 const updateUserStatus = [
   body('status').notEmpty().isIn(VALID_STATUSES).withMessage('Invalid user status.'),
+  body('reason')
+    .optional({ nullable: true, checkFalsy: true })
+    .isString().trim()
+    .isLength({ max: 250 }).withMessage('Reason must not exceed 250 characters.')
+    .custom((value) => countWords(value) <= 25).withMessage('Reason must be 25 words or fewer.'),
 ];
 
 module.exports = { idParam, listUsersQuery, updateUserStatus };

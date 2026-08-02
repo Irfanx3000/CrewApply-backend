@@ -1,8 +1,10 @@
 'use strict';
 
 const SupportInquiry = require('../models/supportInquiry.model');
+const User = require('../models/user.model');
 const notificationService = require('./notification.service');
 const auditService = require('./audit.service');
+const { statusOf } = require('./adminUser.service');
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
@@ -44,6 +46,8 @@ const presentInquiry = (i) => ({
   email: i.email,
   message: i.message,
   subscriptionTier: i.subscriptionTierSnapshot,
+  source: i.source,
+  accountStatusSnapshot: i.accountStatusSnapshot,
   status: i.status,
   adminReply: i.adminReply,
   createdAt: i.createdAt,
@@ -63,6 +67,43 @@ const createInquiry = async ({ user, name, email, message }, req) => {
   });
 
   audit(AUDIT_EVENTS.SUPPORT_INQUIRY_CREATED, user._id, req, { inquiryId: inquiry._id });
+
+  notificationService
+    .notifyAdmins({
+      type: notificationService.NOTIFICATION_TYPES.SUPPORT_INQUIRY_CREATED,
+      title: 'New Support Inquiry',
+      body: `${name} submitted a support request.`,
+      data: { inquiryId: inquiry._id },
+    })
+    .catch(() => {});
+
+  return presentInquiry(inquiry);
+};
+
+// Unauthenticated variant — reached from a logged-out or blocked user (the
+// "Account Blocked" screen, or the Help & Support menu on the Auth stack).
+// Best-effort matches the submitted email against an existing account purely
+// so the admin list can flag "this is coming from a blocked/deleted user" —
+// no session, no token, no data about the account is ever returned.
+const createPublicInquiry = async ({ name, email, message }, req) => {
+  const matchedUser = await User.findOne({ email: email.toLowerCase().trim() })
+    .select('_id subscriptionTier isActive isDeleted');
+
+  const inquiry = await SupportInquiry.create({
+    user: matchedUser ? matchedUser._id : null,
+    name,
+    email,
+    message,
+    source: 'public',
+    subscriptionTierSnapshot: matchedUser?.subscriptionTier || null,
+    priorityRank: TIER_RANK[matchedUser?.subscriptionTier] || 0,
+    accountStatusSnapshot: matchedUser ? statusOf(matchedUser) : null,
+  });
+
+  audit(AUDIT_EVENTS.SUPPORT_INQUIRY_CREATED, matchedUser?._id || null, req, {
+    inquiryId: inquiry._id,
+    source: 'public',
+  });
 
   notificationService
     .notifyAdmins({
@@ -135,6 +176,7 @@ const updateInquiryStatus = async (id, { status, reply }, adminId, req) => {
 
 module.exports = {
   createInquiry,
+  createPublicInquiry,
   listAdminInquiries,
   getAdminInquiryById,
   updateInquiryStatus,

@@ -69,4 +69,9 @@ const updateInquiryStatus = [
     .custom(noDangerousContent),
 ];
 
-module.exports = { createInquiry, inquiryIdParam, listInquiriesQuery, updateInquiryStatus };
+// Public/unauthenticated submissions carry the same shape and the same
+// injection guard as the authenticated form — no relaxed rules for the
+// unauthenticated path.
+const createPublicInquiry = createInquiry;
+
+module.exports = { createInquiry, createPublicInquiry, inquiryIdParam, listInquiriesQuery, updateInquiryStatus };

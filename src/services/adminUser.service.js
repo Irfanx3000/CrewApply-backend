@@ -58,6 +58,7 @@ const presentAdminUser = (user) => ({
   joinedAt: user.createdAt,
   lastLoginAt: user.lastLoginAt,
   deletedAt: user.deletedAt,
+  blockedReason: user.blockedReason,
 });
 
 // Lists seafarer/recruiter accounts only — never admins, this panel doesn't
@@ -104,7 +105,7 @@ const getAdminUserById = async (id) => {
 
 // One endpoint drives Block / Unblock / Delete / Restore — they're really
 // just the 3 states of the same status field, not 4 independent actions.
-const setStatus = async (id, status, adminId, req) => {
+const setStatus = async (id, status, reason, adminId, req) => {
   if (!VALID_STATUSES.includes(status)) {
     throw new AppError(AUTH_MESSAGES.INVALID_USER_STATUS, HTTP_STATUS.BAD_REQUEST, 'INVALID_USER_STATUS');
   }
@@ -120,6 +121,7 @@ const setStatus = async (id, status, adminId, req) => {
   user.isActive = status === 'active';
   user.isDeleted = status === 'deleted';
   user.deletedAt = status === 'deleted' ? new Date() : null;
+  user.blockedReason = status === 'blocked' ? (reason || null) : null;
   await user.save();
 
   auditService
@@ -129,4 +131,4 @@ const setStatus = async (id, status, adminId, req) => {
   return presentAdminUser(user.toObject());
 };
 
-module.exports = { listAdminUsers, getAdminUserById, setStatus, VALID_STATUSES };
+module.exports = { listAdminUsers, getAdminUserById, setStatus, VALID_STATUSES, statusOf };

@@ -122,6 +122,21 @@ const releaseAbandonedOrders = async (userId) => {
 // month: "YYYY-MM". Returns which dates (today or later) have at least one
 // still-unbooked time per the recurring weekly schedule — the mobile
 // calendar only needs a boolean per date.
+// A slot counts as "taken" for display purposes if it's booked, or if it's
+// still a fresh (non-expired) reservation hold. Without the reservedAt age
+// check, an abandoned checkout would make a slot look permanently
+// unavailable to every OTHER user until someone else happened to trigger
+// releaseAbandonedHolds()'s lazy sweep via their own createBookingOrder call
+// — these read endpoints never called it themselves. This only affects what
+// gets REPORTED as taken; the actual row is still physically deleted later
+// by the existing sweep, unchanged.
+const takenMatch = () => ({
+  $or: [
+    { status: 'booked' },
+    { status: 'reserved', reservedAt: { $gte: new Date(Date.now() - SLOT_HOLD_TTL_MS) } },
+  ],
+});
+
 const getAvailability = async ({ month }) => {
   const match = /^(\d{4})-(\d{2})$/.exec(String(month));
   if (!match) {
@@ -153,7 +168,7 @@ const getAvailability = async ({ month }) => {
 
   // One aggregate for the whole visible range instead of one query per date.
   const takenAgg = await ConsultancySlot.aggregate([
-    { $match: { date: { $in: candidates.map((c) => c.date) }, status: { $in: ['reserved', 'booked'] } } },
+    { $match: { date: { $in: candidates.map((c) => c.date) }, ...takenMatch() } },
     { $group: { _id: '$date', count: { $sum: 1 } } },
   ]);
   const takenByDateStr = new Map(takenAgg.map((t) => [toDateStr(t._id), t.count]));
@@ -172,13 +187,24 @@ const getSlotsForDate = async (dateStr) => {
   const enabledTimes = new Set(ranges.flatMap((r) => expandRangeToStartTimes(r, slotIntervalMinutes)));
   if (!enabledTimes.size) return [];
 
-  const taken = await ConsultancySlot.find({ date, status: { $in: ['reserved', 'booked'] } }).select('startTime').lean();
+  const taken = await ConsultancySlot.find({ date, ...takenMatch() }).select('startTime').lean();
   const takenTimes = new Set(taken.map((s) => s.startTime));
 
   return Array.from(enabledTimes)
     .filter((time) => !takenTimes.has(time))
     .sort()
     .map((time) => ({ startTime: time, endTime: addMinutes(time, slotIntervalMinutes) }));
+};
+
+// Read-only price preview — same fee-resolution logic createBookingOrder
+// runs (resolveRegion + pricingSettingService.getConsultancyFee()), exposed
+// with no slot claim / side effects so the mobile app can show the price
+// BEFORE the user fills out the booking form, not only after tapping
+// "Confirm Booking" (which is what actually reserves a slot today).
+const getFee = async (user) => {
+  const region = resolveRegion(user);
+  const fee = await pricingSettingService.getConsultancyFee();
+  return { amount: fee?.[region]?.amount || 0, currency: CURRENCY_BY_REGION[region] };
 };
 
 // ── User-facing: create + verify a booking order ──────────────────────────────
@@ -550,7 +576,18 @@ const updateBookingStatus = async (id, { status, note }, adminId, req) => {
   booking.statusUpdatedBy = adminId;
   await booking.save();
 
-  const user = await User.findById(booking.user).select('name email');
+  // A rejected booking never happens — release its slot so the time becomes
+  // bookable again. 'released' (not deleted) so this booking's own
+  // .populate('slot') keeps resolving to a real document for historical
+  // display (see the model's comment for why deleting would crash).
+  if (status === 'rejected') {
+    await ConsultancySlot.updateOne({ _id: booking.slot }, { $set: { status: 'released' } });
+  }
+
+  const [user, slot] = await Promise.all([
+    User.findById(booking.user).select('name email'),
+    ConsultancySlot.findById(booking.slot).select('date startTime endTime').lean(),
+  ]);
   if (user) {
     const isConfirmed = status === 'confirmed';
     const notifType = isConfirmed
@@ -573,7 +610,15 @@ const updateBookingStatus = async (id, { status, note }, adminId, req) => {
     // status email — must never block or fail the status-update response.
     if (user.email) {
       emailService
-        .sendConsultancyBookingStatusEmail({ to: user.email, name: user.name, isConfirmed, note })
+        .sendConsultancyBookingStatusEmail({
+          to: user.email,
+          name: user.name,
+          isConfirmed,
+          note,
+          topic: booking.topic,
+          slotDate: slot?.date,
+          slotTime: slot?.startTime,
+        })
         .catch(() => {});
     }
   }
@@ -587,6 +632,7 @@ module.exports = {
   // user-facing
   getAvailability,
   getSlotsForDate,
+  getFee,
   createBookingOrder,
   verifyPayment,
   activateBooking, // exported for payment.service.js's type-dispatch (reconcile + webhook)

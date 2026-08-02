@@ -40,6 +40,33 @@ const paymentSchema = new mongoose.Schema(
     tier: { type: String, required: function () { return this.type === 'subscription'; } },
     billingCycle: { type: String, required: function () { return this.type === 'subscription'; } },
 
+    // Set only when this order is a plan SWITCH (upgrade/downgrade, or a
+    // billing-cycle change on the same tier) — the Subscription being
+    // replaced. Used by activate() to decide fresh-start-from-today vs
+    // stack-on-remaining-time, and to know which subscription to credit
+    // proration against. Null for a first-time purchase or a same-plan renewal.
+    previousSubscription: { type: mongoose.Schema.Types.ObjectId, ref: 'Subscription', default: null },
+    // Paise credited from the old plan's unused CASH-paid value (never from
+    // amountBeforeCredit/walletApplied — see subscription.service.js's
+    // computeProratedCredit for why: crediting the wallet-funded portion
+    // back out would let a user launder wallet credit into more wallet
+    // credit by switching repeatedly).
+    proratedCredit: { type: Number, default: 0 },
+    // Paise of proratedCredit beyond what this charge could absorb (e.g. a
+    // downgrade to a much cheaper plan) — credited to the wallet once this
+    // payment activates, never refunded as cash (no partial-refund gateway
+    // integration exists in this codebase).
+    excessProrationCredit: { type: Number, default: 0 },
+    // Classified once at order-creation time and stored (rather than
+    // re-derived later) so a reused/abandoned order's summary always shows
+    // the same scenario it was created under, even if the user's live
+    // subscription state has since changed.
+    scenario: {
+      type: String,
+      enum: { values: ['purchase', 'renewal', 'upgrade', 'downgrade'], message: 'Invalid scenario.' },
+      default: 'purchase',
+    },
+
     // Consultancy-only fields below — null for type:'subscription'.
     consultancySlot: { type: mongoose.Schema.Types.ObjectId, ref: 'ConsultancySlot', default: null },
     consultancyTopic: { type: String, default: null },

@@ -18,6 +18,13 @@ const getSlotsForDate = asyncHandler(async (req, res) => {
   return successResponse(res, AUTH_MESSAGES.CONSULTANCY_SLOTS_FETCHED, { slots: data });
 });
 
+// GET /consultancy/fee — read-only price preview, shown before the booking
+// form so the user knows this is paid (and how much) upfront.
+const getFee = asyncHandler(async (req, res) => {
+  const data = await consultancyService.getFee(req.user);
+  return successResponse(res, AUTH_MESSAGES.CONSULTANCY_FEE_FETCHED, data);
+});
+
 // POST /consultancy/order — create (or reuse) a Razorpay order for a date+time
 // drawn from the recurring weekly schedule. No amount from client.
 const createOrder = asyncHandler(async (req, res) => {
@@ -54,6 +61,7 @@ const getMyBookingById = asyncHandler(async (req, res) => {
 module.exports = {
   getAvailability,
   getSlotsForDate,
+  getFee,
   createOrder,
   verify,
   listMyBookings,

@@ -14,4 +14,12 @@ const create = asyncHandler(async (req, res) => {
   return successResponse(res, AUTH_MESSAGES.SUPPORT_INQUIRY_CREATED, { inquiry }, HTTP_STATUS.CREATED);
 });
 
-module.exports = { create };
+const createPublic = asyncHandler(async (req, res) => {
+  const inquiry = await supportInquiryService.createPublicInquiry(
+    { name: req.body.name, email: req.body.email, message: req.body.message },
+    req
+  );
+  return successResponse(res, AUTH_MESSAGES.SUPPORT_INQUIRY_CREATED, { inquiry }, HTTP_STATUS.CREATED);
+});
+
+module.exports = { create, createPublic };
