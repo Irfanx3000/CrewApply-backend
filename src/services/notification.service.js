@@ -227,7 +227,22 @@ const markAllRead = async (userId, { type } = {}) => {
   await Notification.updateMany(filter, { read: true, readAt: new Date() });
 };
 
+// A physical device's FCM token can only ever belong to ONE currently-logged-
+// in account. Reclaiming it from every OTHER user first — not just this
+// one's own array — is what makes this correct regardless of how a previous
+// session on this device ended (explicit logout, account block, a dead
+// refresh token, or the app just being force-quit/reinstalled with no
+// deregister call at all). Without this, a device that's ever been through
+// more than one account keeps every earlier account's token registered
+// forever, and every one of THEIR notifications keeps pushing to this one
+// phone — which is exactly why a push could be seen for something totally
+// unrelated to the currently logged-in user, while the in-app list (correctly
+// scoped to the logged-in user's own Notification docs) stays empty for it.
 const registerDeviceToken = async (userId, { token, platform }) => {
+  await User.updateMany(
+    { _id: { $ne: userId }, 'deviceTokens.token': token },
+    { $pull: { deviceTokens: { token } } }
+  );
   await User.updateOne({ _id: userId }, { $pull: { deviceTokens: { token } } });
   await User.updateOne({ _id: userId }, { $push: { deviceTokens: { token, platform, createdAt: new Date() } } });
 };

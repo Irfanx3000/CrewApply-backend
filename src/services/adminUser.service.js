@@ -122,6 +122,16 @@ const setStatus = async (id, status, reason, adminId, req) => {
   user.isDeleted = status === 'deleted';
   user.deletedAt = status === 'deleted' ? new Date() : null;
   user.blockedReason = status === 'blocked' ? (reason || null) : null;
+  // Blocking/deleting must clear device tokens HERE — auth.middleware.js
+  // rejects every request from a blocked/deleted account (even with an
+  // otherwise-valid JWT), so the mobile app can never successfully call its
+  // own deregister endpoint once this happens. Without this, the device
+  // keeps receiving pushes for an account the user can no longer even open
+  // the app as, and the token sits there until someone else's login on that
+  // same device reclaims it (see notification.service.js#registerDeviceToken).
+  if (status !== 'active') {
+    user.deviceTokens = [];
+  }
   await user.save();
 
   auditService
