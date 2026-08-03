@@ -2,6 +2,7 @@
 
 const path = require('path');
 const JobTaxonomy = require('../models/jobTaxonomy.model');
+const Job = require('../models/job.model');
 const auditService = require('./audit.service');
 const { convertToWebp } = require('../utils/image.util');
 const { assertRealFileType, deleteTempFile } = require('../utils/uploadGuard.util');
@@ -24,12 +25,28 @@ const pick = (source, fields) =>
     return acc;
   }, {});
 
+// The admin panel's DTO expects `id`, not Mongoose's `_id` — without this,
+// every taxonomy in the admin UI carries `id: undefined`, breaking edit/
+// delete/toggle (they PATCH/DELETE `/admin/job-taxonomies/undefined`) and
+// React's list keys. Mirrors banner.service.js#presentBanner.
+const presentTaxonomy = (taxonomy) => ({
+  id: taxonomy._id,
+  type: taxonomy.type,
+  name: taxonomy.name,
+  isActive: taxonomy.isActive,
+  sortOrder: taxonomy.sortOrder,
+  icon: taxonomy.icon,
+  createdAt: taxonomy.createdAt,
+  updatedAt: taxonomy.updatedAt,
+});
+
 const listActive = (type) =>
   JobTaxonomy.find({ type, isActive: true }).sort({ sortOrder: 1, name: 1 }).lean();
 
-const listAll = (type, includeInactive) => {
+const listAll = async (type, includeInactive) => {
   const filter = includeInactive ? { type } : { type, isActive: true };
-  return JobTaxonomy.find(filter).sort({ sortOrder: 1, name: 1 }).lean();
+  const taxonomies = await JobTaxonomy.find(filter).sort({ sortOrder: 1, name: 1 }).lean();
+  return taxonomies.map(presentTaxonomy);
 };
 
 const getById = async (id) => {
@@ -37,7 +54,7 @@ const getById = async (id) => {
   if (!taxonomy) {
     throw new AppError(AUTH_MESSAGES.JOB_TAXONOMY_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'NOT_FOUND');
   }
-  return taxonomy;
+  return presentTaxonomy(taxonomy);
 };
 
 const create = async (body, adminId) => {
@@ -59,7 +76,7 @@ const create = async (body, adminId) => {
   auditService
     .log({ event: AUDIT_EVENTS.JOB_TAXONOMY_CREATED, userId: adminId, metadata: { jobTaxonomyId: taxonomy._id, type: taxonomy.type, name: taxonomy.name } })
     .catch(() => {});
-  return taxonomy;
+  return presentTaxonomy(taxonomy);
 };
 
 const update = async (id, body, adminId) => {
@@ -75,24 +92,38 @@ const update = async (id, body, adminId) => {
   auditService
     .log({ event: AUDIT_EVENTS.JOB_TAXONOMY_UPDATED, userId: adminId, metadata: { jobTaxonomyId: taxonomy._id, type: taxonomy.type, name: taxonomy.name } })
     .catch(() => {});
-  return taxonomy;
+  return presentTaxonomy(taxonomy);
 };
 
-// Soft-deactivate only — never hard-delete a value that existing Jobs reference.
-const deactivate = async (id, adminId) => {
-  const taxonomy = await JobTaxonomy.findByIdAndUpdate(
-    id,
-    { $set: { isActive: false, updatedBy: adminId } },
-    { new: true }
-  );
+// Hard-delete — permanently removes the entry, unlike `deactivate` above.
+// Blocked if any Job still references it (Job.department/category/vesselType
+// store the taxonomy's exact `name` string, not an ObjectId — see
+// job.model.js), since silently orphaning that string would make those jobs'
+// department/category/vesselType look blank in the UI with no way to fix it
+// short of a DB edit. The admin has to either reassign/remove those jobs
+// first, or use "Deactivate" instead, which hides it going forward without
+// touching existing jobs.
+const remove = async (id, adminId) => {
+  const taxonomy = await JobTaxonomy.findById(id);
   if (!taxonomy) {
     throw new AppError(AUTH_MESSAGES.JOB_TAXONOMY_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'NOT_FOUND');
   }
 
+  const jobsInUse = await Job.countDocuments({ [taxonomy.type]: taxonomy.name });
+  if (jobsInUse > 0) {
+    throw new AppError(
+      `Can't delete "${taxonomy.name}" — it's still used by ${jobsInUse} job listing${jobsInUse === 1 ? '' : 's'}. Deactivate it instead, or reassign those jobs first.`,
+      HTTP_STATUS.CONFLICT,
+      'JOB_TAXONOMY_IN_USE'
+    );
+  }
+
+  await taxonomy.deleteOne();
+
   auditService
-    .log({ event: AUDIT_EVENTS.JOB_TAXONOMY_DEACTIVATED, userId: adminId, metadata: { jobTaxonomyId: taxonomy._id, type: taxonomy.type, name: taxonomy.name } })
+    .log({ event: AUDIT_EVENTS.JOB_TAXONOMY_DELETED, userId: adminId, metadata: { jobTaxonomyId: taxonomy._id, type: taxonomy.type, name: taxonomy.name } })
     .catch(() => {});
-  return taxonomy;
+  return presentTaxonomy(taxonomy);
 };
 
 // Uploads a custom category icon image, converts to WebP (small/square —
@@ -118,6 +149,6 @@ module.exports = {
   getById,
   create,
   update,
-  deactivate,
+  remove,
   uploadIcon,
 };

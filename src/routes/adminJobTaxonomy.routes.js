@@ -24,6 +24,6 @@ router.patch(
   validate([...jobTaxonomyValidation.jobTaxonomyIdParam, ...jobTaxonomyValidation.updateJobTaxonomy]),
   adminJobTaxonomyController.updateJobTaxonomy
 );
-router.delete('/:id', validate(jobTaxonomyValidation.jobTaxonomyIdParam), adminJobTaxonomyController.deactivateJobTaxonomy);
+router.delete('/:id', validate(jobTaxonomyValidation.jobTaxonomyIdParam), adminJobTaxonomyController.deleteJobTaxonomy);
 
 module.exports = router;

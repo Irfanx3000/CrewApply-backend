@@ -272,7 +272,7 @@ const AUTH_MESSAGES = Object.freeze({
   // Job Taxonomy — Department/Vessel Type
   JOB_TAXONOMY_CREATED: 'Added successfully.',
   JOB_TAXONOMY_UPDATED: 'Updated successfully.',
-  JOB_TAXONOMY_DEACTIVATED: 'Deactivated successfully.',
+  JOB_TAXONOMY_DELETED: 'Deleted successfully.',
   JOB_TAXONOMY_FETCHED: 'Fetched successfully.',
   JOB_TAXONOMIES_FETCHED: 'Fetched successfully.',
   JOB_TAXONOMY_NOT_FOUND: 'Not found.',

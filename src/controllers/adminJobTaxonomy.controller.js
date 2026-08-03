@@ -30,9 +30,9 @@ const updateJobTaxonomy = asyncHandler(async (req, res) => {
   return successResponse(res, AUTH_MESSAGES.JOB_TAXONOMY_UPDATED, { jobTaxonomy });
 });
 
-const deactivateJobTaxonomy = asyncHandler(async (req, res) => {
-  const jobTaxonomy = await jobTaxonomyService.deactivate(req.params.id, req.user._id);
-  return successResponse(res, AUTH_MESSAGES.JOB_TAXONOMY_DEACTIVATED, { jobTaxonomy });
+const deleteJobTaxonomy = asyncHandler(async (req, res) => {
+  const jobTaxonomy = await jobTaxonomyService.remove(req.params.id, req.user._id);
+  return successResponse(res, AUTH_MESSAGES.JOB_TAXONOMY_DELETED, { jobTaxonomy });
 });
 
 const uploadIcon = asyncHandler(async (req, res) => {
@@ -51,6 +51,6 @@ module.exports = {
   getAdminJobTaxonomyById,
   createJobTaxonomy,
   updateJobTaxonomy,
-  deactivateJobTaxonomy,
+  deleteJobTaxonomy,
   uploadIcon,
 };
