@@ -71,6 +71,12 @@ const errorMiddleware = (err, _req, res, _next) => {
 
   // ── Determine whether to expose details ─────────────────────────────────
   if (error.isOperational) {
+    // Any error that knows when the caller may retry (today: the 423 account
+    // lockout) advertises it as a standard header too, not just inside our
+    // own JSON envelope.
+    if (error.details?.retryAfterSeconds) {
+      res.set('Retry-After', String(error.details.retryAfterSeconds));
+    }
     return errorResponse(res, error.message, error.statusCode, error.code, error.details);
   }
 

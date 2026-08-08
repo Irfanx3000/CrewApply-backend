@@ -5,6 +5,8 @@ const path = require('path');
 const Document = require('../models/document.model');
 const DocumentType = require('../models/documentType.model');
 const User = require('../models/user.model');
+const ResumeConfiguration = require('../models/resumeConfiguration.model');
+const Application = require('../models/application.model');
 const { saveFile } = require('./storage.service');
 const { convertToWebp } = require('../utils/image.util');
 const { assertRealFileType, deleteTempFile } = require('../utils/uploadGuard.util');
@@ -329,6 +331,56 @@ const uploadDocumentGeneric = async (userId, file, category, metadataRaw) => {
 
 // ── Delete (soft) ─────────────────────────────────────────────────────────────
 
+/**
+ * Clears every OTHER record that points at a document we just archived, so
+ * nothing in the app keeps advertising a file the user has deleted.
+ *
+ * Most Document-derived reads are already live queries filtered on
+ * `status: 'active'` (the Career Profile's certificates/travel documents, the
+ * Documents list, profile completion), so they self-correct. These two are
+ * the exceptions — they store the document's id (or path) on another
+ * collection, and would otherwise stay pointing at an archived file forever:
+ *
+ *   1. User.avatar — a denormalized copy of the profile photo's path, read by
+ *      the header, sidebar and the Career Profile's Personal section.
+ *   2. ResumeConfiguration.metadata — the "My Resumes" row on the Career
+ *      Profile screen offers View/Download purely because
+ *      lastGeneratedDocumentId is set; leaving it set after the PDF is gone
+ *      gives the user a button that can only 404.
+ *
+ * Never touches Application.submittedDocuments: an application's document
+ * snapshot is deliberately immutable once submitted (see applyToJob), and the
+ * archived Document row plus its file both survive precisely so an admin can
+ * still open exactly what was sent — see getAdminDocumentFile below.
+ */
+const propagateDocumentRemoval = async (doc) => {
+  if (doc.category === 'profile_photo') {
+    // Guarded on the path so a stale delete (e.g. archiving an older photo
+    // after a newer one was uploaded) can't wipe the current avatar.
+    await User.updateOne({ _id: doc.user, avatar: doc.path }, { $set: { avatar: null } });
+  }
+
+  const resumeConfigurationId = doc.generatedFrom?.resumeConfigurationId;
+  if (doc.source === 'generated' && resumeConfigurationId) {
+    await ResumeConfiguration.updateOne(
+      { _id: resumeConfigurationId, user: doc.user },
+      { $pull: { 'metadata.generatedDocumentIds': doc._id } }
+    );
+    // Only the CURRENT generation resets the row back to "not generated yet";
+    // deleting some older version leaves the latest one intact.
+    await ResumeConfiguration.updateOne(
+      { _id: resumeConfigurationId, user: doc.user, 'metadata.lastGeneratedDocumentId': doc._id },
+      {
+        $set: {
+          'metadata.lastGeneratedDocumentId': null,
+          'metadata.lastGeneratedAt': null,
+          'metadata.contentHashAtLastGeneration': null,
+        },
+      }
+    );
+  }
+};
+
 const deleteDocument = async (userId, docId) => {
   const doc = await Document.findOne({ _id: docId, user: userId });
   if (!doc) {
@@ -336,6 +388,7 @@ const deleteDocument = async (userId, docId) => {
   }
   doc.status = 'archived';
   await doc.save();
+  await propagateDocumentRemoval(doc);
   return doc;
 };
 
@@ -374,15 +427,30 @@ const getDocumentFile = async (userId, docId) => {
 /**
  * Admin equivalent of getDocumentFile — no ownership restriction (an admin can
  * review any applicant's submitted documents), but still requires the document
- * to be active and to actually exist on disk. Gated by normal admin auth at
- * the route level (authenticate + authorize(ADMIN)), not a scoped view token —
- * a web admin panel can attach a real Authorization header, unlike the mobile
- * app's <Image>/Linking.openURL flows that needed the token-in-URL workaround.
+ * to actually exist on disk. Gated by normal admin auth at the route level
+ * (authenticate + authorize(ADMIN)), not a scoped view token — a web admin
+ * panel can attach a real Authorization header, unlike the mobile app's
+ * <Image>/Linking.openURL flows that needed the token-in-URL workaround.
+ *
+ * Archived documents stay readable here IF they were submitted with an
+ * application. Without that exemption a user could effectively retract
+ * evidence after the fact: deleting (or re-uploading, which archives the
+ * previous copy) a file already sent to a recruiter would turn the admin's
+ * view of that application into a 404. What was submitted is fixed at
+ * apply-time and must remain viewable for as long as the application exists.
+ * Archived documents that were NEVER submitted stay unreadable, as before.
  */
 const getAdminDocumentFile = async (docId) => {
-  const doc = await Document.findOne({ _id: docId, status: 'active' }).lean();
+  const doc = await Document.findById(docId).lean();
   if (!doc) {
     throw new AppError(AUTH_MESSAGES.DOCUMENT_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'NOT_FOUND');
+  }
+
+  if (doc.status !== 'active') {
+    const wasSubmitted = await Application.exists({ 'submittedDocuments.document': doc._id });
+    if (!wasSubmitted) {
+      throw new AppError(AUTH_MESSAGES.DOCUMENT_NOT_FOUND, HTTP_STATUS.NOT_FOUND, 'NOT_FOUND');
+    }
   }
 
   const absolutePath = path.join(__dirname, '..', doc.path);

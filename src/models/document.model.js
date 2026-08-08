@@ -88,6 +88,12 @@ const documentSchema = new mongoose.Schema(
       resumeConfigurationId: { type: mongoose.Schema.Types.ObjectId, ref: 'ResumeConfiguration', default: null },
       templateId: { type: mongoose.Schema.Types.ObjectId, ref: 'ResumeTemplate', default: null },
       version: { type: Number, default: null },
+      // Whether the free-tier watermark was burned into this file. Decided
+      // solely by resumeRender.service.js from live subscription state;
+      // recorded here so the file's status is auditable without re-parsing the
+      // PDF. Defaults to true so anything created without an explicit decision
+      // is treated as the restricted case, never the privileged one.
+      watermarked: { type: Boolean, default: true },
     },
   },
   {

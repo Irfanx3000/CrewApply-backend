@@ -19,6 +19,41 @@ const referralService = require('./referral.service');
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
+ * Machine-readable "when can I try again" payload for a locked account.
+ *
+ * The client can't compute this on its own — `lockUntil` never leaves the
+ * server — so a locked-out user used to see only "Please try again later"
+ * with no way to know whether that meant one minute or one day. Both fields
+ * are sent: the ISO timestamp so the UI can show a wall-clock time, and the
+ * pre-computed second count so it can run a countdown without depending on
+ * the device clock being correct (frequently it isn't).
+ */
+const buildLockDetails = (user) => {
+  const until = user.lockUntil ? new Date(user.lockUntil) : null;
+  if (!until) return null;
+  return {
+    lockedUntil: until.toISOString(),
+    retryAfterSeconds: Math.max(1, Math.ceil((until.getTime() - Date.now()) / 1000)),
+    lockDurationMinutes: config.security.lockDurationMinutes,
+  };
+};
+
+/**
+ * "N attempts left before we lock this account" — see
+ * config.security.revealRemainingAttempts for the enumeration trade-off this
+ * makes, and how to turn it off.
+ */
+const buildAttemptDetails = (user) => {
+  if (!config.security.revealRemainingAttempts) return null;
+  const { maxLoginAttempts } = config.security;
+  return {
+    attemptsRemaining: Math.max(0, maxLoginAttempts - user.loginAttempts),
+    maxAttempts: maxLoginAttempts,
+    lockDurationMinutes: config.security.lockDurationMinutes,
+  };
+};
+
+/**
  * Extracts request context (IP + user-agent) for logging and token storage.
  */
 const extractContext = (req) => ({
@@ -338,8 +373,11 @@ const login = async ({ identifier, password }, req) => {
     throw new AppError(AUTH_MESSAGES.ACCOUNT_BLOCKED, HTTP_STATUS.FORBIDDEN, 'ACCOUNT_BLOCKED', { blockedReason: user.blockedReason || null });
   }
 
+  // Already locked from an earlier burst — reject before touching bcrypt, and
+  // WITHOUT calling handleFailedLogin(), so hammering a locked account can
+  // never extend its own lockout.
   if (user.isLocked) {
-    throw new AppError(AUTH_MESSAGES.ACCOUNT_LOCKED, HTTP_STATUS.LOCKED, 'ACCOUNT_LOCKED');
+    throw new AppError(AUTH_MESSAGES.ACCOUNT_LOCKED, HTTP_STATUS.LOCKED, 'ACCOUNT_LOCKED', buildLockDetails(user));
   }
 
   const isPasswordValid = await user.comparePassword(password);
@@ -354,12 +392,18 @@ const login = async ({ identifier, password }, req) => {
       metadata: { attempts: user.loginAttempts },
     });
 
+    // This attempt is the one that tripped the lock.
     if (user.isLocked) {
       await auditService.log({ event: AUDIT_EVENTS.ACCOUNT_LOCKED, userId: user._id, ...context });
-      throw new AppError(AUTH_MESSAGES.ACCOUNT_LOCKED, HTTP_STATUS.LOCKED, 'ACCOUNT_LOCKED');
+      throw new AppError(AUTH_MESSAGES.ACCOUNT_LOCKED, HTTP_STATUS.LOCKED, 'ACCOUNT_LOCKED', buildLockDetails(user));
     }
 
-    throw new AppError(AUTH_MESSAGES.INVALID_CREDENTIALS, HTTP_STATUS.UNAUTHORIZED, 'INVALID_CREDENTIALS');
+    throw new AppError(
+      AUTH_MESSAGES.INVALID_CREDENTIALS,
+      HTTP_STATUS.UNAUTHORIZED,
+      'INVALID_CREDENTIALS',
+      buildAttemptDetails(user)
+    );
   }
 
   await user.resetLoginAttempts();

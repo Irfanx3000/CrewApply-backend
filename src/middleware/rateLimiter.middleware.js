@@ -19,10 +19,29 @@ const createLimiter = ({ windowMs, max, message }) => {
     standardHeaders: true,
     legacyHeaders: false,
     handler: (req, res) => {
+      // These are fixed windows, so the real wait is however much of the
+      // current window is left — NOT the full windowMs. Trip the limit 14
+      // minutes into a 15-minute window and the honest answer is "about a
+      // minute". The messages used to hardcode the window length ("try again
+      // in 15 minutes"), which was wrong in every case except the first
+      // request of a window, and trained users to wait far longer than needed.
+      const resetTime = req.rateLimit?.resetTime;
+      const retryAfterSeconds = resetTime
+        ? Math.max(1, Math.ceil((new Date(resetTime).getTime() - Date.now()) / 1000))
+        : Math.ceil(windowMs / 1000);
+
+      // Standard HTTP semantics, independent of the JSON body — respected by
+      // proxies and HTTP clients that know nothing about our response shape.
+      res.set('Retry-After', String(retryAfterSeconds));
+
       return res.status(HTTP_STATUS.TOO_MANY_REQUESTS).json({
         success: false,
         message: message || AUTH_MESSAGES.TOO_MANY_REQUESTS,
         code: 'RATE_LIMIT_EXCEEDED',
+        details: {
+          retryAfterSeconds,
+          retryAt: resetTime ? new Date(resetTime).toISOString() : null,
+        },
       });
     },
   });
@@ -35,7 +54,10 @@ const createLimiter = ({ windowMs, max, message }) => {
 const authLimiter = createLimiter({
   windowMs: config.rateLimit.auth.windowMs,
   max: config.rateLimit.auth.max,
-  message: 'Too many authentication attempts. Please try again in 15 minutes.',
+  // No duration in the copy — it was wrong whenever the limit tripped
+  // mid-window. Clients render the real wait from details.retryAfterSeconds;
+  // this string is only the fallback for clients that don't.
+  message: 'Too many authentication attempts. Please wait before trying again.',
 });
 
 /**

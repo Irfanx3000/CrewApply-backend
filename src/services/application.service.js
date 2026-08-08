@@ -35,16 +35,94 @@ const parseCsvFilter = (value) => {
 const jobIsOpenForApplications = (job) =>
   job.status === 'published' && (!job.applicationDeadline || new Date(job.applicationDeadline) >= new Date());
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 /**
- * How many applications this user has submitted this calendar month against
- * their plan's limit — shared by the enforcement path (applyToJob),
- * eligibility (checkEligibility), and the global usage counter surfaced via
- * subscription.service.js's getMySubscription. Withdrawn applications don't
- * count (they free the slot), matching the duplicate-application check's
- * own semantics elsewhere in this file.
+ * The application-quota window currently in effect for a subscription.
  *
- * `applicationLimit`/`applicationsRemaining` are null when the user's plan
- * has no cap (e.g. elite) or has no active subscription at all.
+ * Windows are fixed `intervalDays` slices measured forward from the
+ * subscription's `quotaAnchor` — bought on 20 Feb, they open on 20 Feb,
+ * 20 Mar, 20 Apr, and so on. Anchoring the CADENCE rather than the
+ * subscription document is what makes the reset date stable across renewals:
+ * a renewal creates a fresh Subscription with a new currentPeriodStart, but
+ * carries the anchor forward, so renewing early cannot pull the reset forward
+ * with it (see subscription.model.js's quotaAnchor note).
+ *
+ * Falls back to currentPeriodStart for subscriptions created before the anchor
+ * existed, so this is safe to call before the backfill has run.
+ *
+ * @returns {{start: Date, end: Date}|null} null when there's nothing to anchor to.
+ */
+const getQuotaWindow = (subscription, intervalDays, now = new Date()) => {
+  const anchorSource = subscription?.quotaAnchor || subscription?.currentPeriodStart;
+  if (!anchorSource) return null;
+
+  const anchor = new Date(anchorSource).getTime();
+  // Guards a malformed/zero intervalDays from producing a divide-by-zero or an
+  // infinite window count.
+  const intervalMs = Math.max(1, Number(intervalDays) || 30) * MS_PER_DAY;
+  const elapsed = now.getTime() - anchor;
+
+  // Anchor in the future (clock skew, or a not-yet-started period) — the first
+  // window simply hasn't opened; treat it as the current one.
+  const index = elapsed <= 0 ? 0 : Math.floor(elapsed / intervalMs);
+  const start = anchor + index * intervalMs;
+
+  return { start: new Date(start), end: new Date(start + intervalMs) };
+};
+
+/**
+ * Applications counted against a subscription's CURRENT quota window.
+ * Withdrawn applications are excluded — withdrawing frees the slot, which is
+ * the same rule the duplicate-application check uses elsewhere in this file.
+ *
+ * Exported because proration needs exactly this number for the OLD plan (see
+ * subscription.service.js's computeProratedCredit) and must not re-derive the
+ * window independently — one definition of "a quota window", used everywhere.
+ */
+const getQuotaUsage = async (userId, subscription, plan, now = new Date()) => {
+  const limit = plan?.jobApplicationLimit ?? null;
+  const window = getQuotaWindow(subscription, plan?.intervalDays, now);
+
+  // No window to measure against (no subscription at all) — fall back to the
+  // calendar month purely so the informational counter still shows something
+  // sensible. Nothing is gated in this state: limit is null, so
+  // applicationsRemaining is null too.
+  const since = window
+    ? window.start
+    : new Date(now.getFullYear(), now.getMonth(), 1);
+
+  const used = await Application.countDocuments({
+    user: userId,
+    createdAt: { $gte: since },
+    status: { $ne: 'withdrawn' },
+  });
+
+  // A limit of 0 (or a negative one) is not a meter anyone can consume, so it
+  // is treated as unmetered rather than as "instantly exhausted".
+  const metered = limit != null && limit > 0;
+
+  return {
+    applicationsUsed: used,
+    applicationLimit: metered ? limit : null,
+    applicationsRemaining: metered ? Math.max(0, limit - used) : null,
+    windowStart: window?.start ?? since,
+    windowEnd: window?.end ?? null,
+  };
+};
+
+/**
+ * How many applications this user has submitted in the CURRENT BILLING-PERIOD
+ * quota window against their plan's limit — shared by the enforcement path
+ * (applyToJob), eligibility (checkEligibility), and the global usage counter
+ * surfaced via subscription.service.js's getMySubscription.
+ *
+ * Was a calendar-month count until quota moved to the billing period. That old
+ * behaviour also meant buying on the 28th earned a fresh quota on the 1st —
+ * three days later — which this removes.
+ *
+ * `applicationLimit`/`applicationsRemaining` are null when the user's plan has
+ * no cap (e.g. elite) or has no active subscription at all.
  */
 const getApplicationUsage = async (user) => {
   const activeSub = await Subscription.findOne({
@@ -53,20 +131,15 @@ const getApplicationUsage = async (user) => {
     currentPeriodEnd: { $gt: new Date() },
   }).populate('plan');
 
-  const limit = activeSub?.plan?.jobApplicationLimit ?? null;
-
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const applicationsUsed = await Application.countDocuments({
-    user: user._id,
-    createdAt: { $gte: monthStart },
-    status: { $ne: 'withdrawn' },
-  });
+  const usage = await getQuotaUsage(user._id, activeSub, activeSub?.plan);
 
   return {
-    applicationsUsed,
-    applicationLimit: limit,
-    applicationsRemaining: limit == null ? null : Math.max(0, limit - applicationsUsed),
+    applicationsUsed: usage.applicationsUsed,
+    applicationLimit: usage.applicationLimit,
+    applicationsRemaining: usage.applicationsRemaining,
+    // Surfaced so the client can say "resets on 20 Mar" instead of the now
+    // untrue "this month".
+    quotaResetsAt: usage.windowEnd,
   };
 };
 
@@ -481,6 +554,8 @@ module.exports = {
   checkEligibility,
   applyToJob,
   getApplicationUsage,
+  getQuotaWindow,
+  getQuotaUsage,
   listMyApplications,
   getMyApplicationById,
   withdrawApplication,

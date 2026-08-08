@@ -80,6 +80,86 @@ const TEMPLATES = [
       visibilityRules: { personal: { photo: false, summary: true }, maritime: true, references: true },
     },
   },
+  {
+    // Reverse-engineered from the supplied reference design: a full-bleed dark
+    // sidebar carrying the photo, identity and the short-form sections, with
+    // the narrative sections on white to its right.
+    //
+    // Proportions taken off the reference: the sidebar edge sits at ~36% of the
+    // page width; the photo is ~60% of the sidebar's width; the name is roughly
+    // 2x body size and the sidebar's section titles are noticeably smaller than
+    // the main column's. Colours sampled from the image: #2B303B ground,
+    // #4A90E2 accent on the designation and the contact glyphs.
+    key: 'maritime-sidebar',
+    name: 'Maritime Sidebar',
+    description: 'Dark sidebar with photo, contact and skills; profile, experience and education on white. High-contrast and photo-forward.',
+    category: 'maritime',
+    sortOrder: 5,
+    layout: {
+      page: {
+        size: 'A4',
+        // Ignored while a sidebar is enabled — the band must bleed to the page
+        // edges, so padding moves to spacing.columnPadding below.
+        margins: { top: 0, right: 0, bottom: 0, left: 0 },
+        columns: 2,
+        sidebar: { enabled: true, widthRatio: 0.36, side: 'left', color: '#2B303B' },
+      },
+      typography: {
+        fontFamily: 'Roboto',
+        baseFontSize: 9.5,
+        headingScale: 1.5,
+        lineHeight: 1.35,
+        sectionTitleCase: 'upper',
+        nameScale: 1.55,
+        nameLetterSpacing: 0.4,
+        sectionTitleLetterSpacing: 0.8,
+        paragraphAlign: 'justify',
+      },
+      colors: {
+        primary: '#1E1E1E',
+        secondary: '#4A90E2',
+        text: '#2B303B',
+        muted: '#6B7280',
+        divider: '#D9D9D9',
+        background: '#FFFFFF',
+        sidebarText: '#FFFFFF',
+        sidebarMuted: '#AEB6C4',
+        sidebarAccent: '#4A90E2',
+        sidebarDivider: '#4A5160',
+      },
+      spacing: { sectionGap: 18, itemGap: 8, blockPadding: 4, columnPadding: 26, columnPaddingTop: 42 },
+      header: {
+        style: 'centered',
+        placement: 'sidebar',
+        showPhoto: true,
+        photoShape: 'circle',
+        photoSize: 96,
+        photoRingWidth: 3,
+        photoRingColor: '#FFFFFF',
+        // Contact has its own icon'd section in the sidebar, so the header's
+        // one-line strip would just repeat it.
+        showContactLine: false,
+      },
+      sectionTitle: { variant: 'plain', sidebarSizeScale: 0.92 },
+      divider: { style: 'none', thickness: 1, color: '#D9D9D9' },
+      sectionOrder: COMMON_SECTION_ORDER,
+      sectionTitles: { summary: 'Profile' },
+      columns: {
+        leftRatio: 0.36,
+        left: ['contact', 'maritime', 'skills', 'languages'],
+        right: ['summary', 'experience', 'education', 'certificates'],
+      },
+      sectionLayouts: {
+        experience: { display: 'timeline', dateAlign: 'right', subtitle: 'full', bulletStyle: 'disc' },
+        education: { display: 'stacked' },
+        certificates: { display: 'table', showExpiry: true },
+        skills: { bulletStyle: 'circle' },
+        languages: { display: 'labelValue', rowLayout: 'inline', bulletStyle: 'circle' },
+        maritime: { display: 'labelValue', rowLayout: 'stacked' },
+      },
+      visibilityRules: { personal: { photo: true, summary: true }, maritime: true, references: false },
+    },
+  },
 ];
 
 (async () => {

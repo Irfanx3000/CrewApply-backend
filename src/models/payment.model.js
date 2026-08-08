@@ -57,6 +57,18 @@ const paymentSchema = new mongoose.Schema(
     // payment activates, never refunded as cash (no partial-refund gateway
     // integration exists in this codebase).
     excessProrationCredit: { type: Number, default: 0 },
+    // Why proratedCredit came out the way it did — frozen alongside the amount
+    // so the summary can explain a zero credit ("you've used all your
+    // applications") instead of silently showing nothing, and so support can
+    // answer "why did I get so little back" from the record itself.
+    prorationReason: {
+      type: String,
+      enum: {
+        values: ['not_applicable', 'quota_exhausted', 'no_time_remaining', 'no_cash_paid', 'partial'],
+        message: 'Invalid proration reason.',
+      },
+      default: 'not_applicable',
+    },
     // Classified once at order-creation time and stored (rather than
     // re-derived later) so a reused/abandoned order's summary always shows
     // the same scenario it was created under, even if the user's live

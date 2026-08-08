@@ -12,7 +12,7 @@ const auditService = require('./audit.service');
 const notificationService = require('./notification.service');
 const emailService = require('./email.service');
 const pricingSettingService = require('./pricingSetting.service');
-const { getApplicationUsage } = require('./application.service');
+const { getApplicationUsage, getQuotaUsage } = require('./application.service');
 const referralService = require('./referral.service');
 const walletService = require('./wallet.service');
 const AppError = require('../utils/AppError');
@@ -25,7 +25,16 @@ const { buildRegex } = require('../utils/searchUtil');
 
 // An open ('created') order older than this is treated as abandoned and released,
 // so a user who bailed out of an earlier checkout isn't locked out forever.
-const PENDING_TTL_MS = 15 * 60 * 1000;
+//
+// Deliberately short. The prorated credit is frozen onto the Payment when the
+// order is created and honoured at activation, so that the figure shown before
+// paying is exactly the figure charged. Days barely move inside that window,
+// but application quota can go from full to empty in seconds — so the window
+// itself is the bound on how much a user could game by draining quota after
+// seeing their credit. Five minutes is comfortably longer than a checkout and
+// short enough that the residual leak (already worth only 25% of unused value)
+// is not worth anyone's effort.
+const PENDING_TTL_MS = 5 * 60 * 1000;
 
 // A user may renew (same tier) only once their plan is within this window of expiry.
 // Renewing extends the period instead of discarding the remaining days. Kept in sync
@@ -108,24 +117,80 @@ const computeAmount = async (plan, userId, region) => {
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-// Cash-only proration — deliberately computed from the old payment's actual
-// `amount` (real money received), never `amountBeforeCredit`/`walletApplied`.
-// Prorating the wallet-funded portion of a purchase and letting the excess
-// flow back to the wallet would let a user launder wallet credit into MORE
-// wallet credit by switching repeatedly. Ratio is capped at 1 — a renewal
-// that stacked remaining runway onto an earlier payment means some of the
-// current remaining days were actually funded by that earlier payment too;
-// capping at the latest payment's own amount is the safe, conservative
-// choice rather than reconstructing a full multi-payment ledger for this
-// rare case.
-const computeProratedCredit = async (existingActive, oldPlanIntervalDays) => {
-  if (!existingActive?.payment) return 0;
-  const oldPayment = await Payment.findById(existingActive.payment).select('amount status').lean();
-  if (!oldPayment || oldPayment.status !== 'paid' || !(oldPayment.amount > 0)) return 0;
+// Share of the unused value handed back to the user when they switch plans.
+// The remaining 75% is retained: a switch is a change of mind the platform
+// absorbs cost for, so it carries a restocking fee rather than being free.
+// Expressed once, here, because it is the single lever that decides how
+// generous every switch in the system is.
+const PRORATION_USER_SHARE = 0.25;
 
-  const daysRemaining = Math.max(0, existingActive.currentPeriodEnd.getTime() - Date.now()) / MS_PER_DAY;
-  const ratio = Math.min(1, daysRemaining / (oldPlanIntervalDays || 30));
-  return Math.round(oldPayment.amount * ratio);
+/**
+ * Value of what the user has NOT consumed on their current plan, converted to
+ * a credit against the new one.
+ *
+ *     credit = cashPaid x min(timeRatio, quotaRatio) x PRORATION_USER_SHARE
+ *
+ * Both ratios are fractions of ONE billing interval, so they are directly
+ * comparable, and the smaller one governs. That is the whole point of the
+ * quota term: time-based proration alone assumes value accrues evenly across
+ * the period, but the metered entitlement can be drained in an afternoon.
+ * Without it, a user who burned all 20 applications by day 10 still collected
+ * two thirds of their payment back — and on a downgrade walked away with a
+ * free plan plus wallet credit.
+ *
+ * Deliberate properties, each load-bearing:
+ *  • Cash-only. Computed from the old payment's actual `amount` (real money
+ *    received), never `amountBeforeCredit`/`walletApplied`. Prorating the
+ *    wallet-funded portion and letting the excess flow back to the wallet
+ *    would let a user launder wallet credit into MORE wallet credit by
+ *    switching repeatedly.
+ *  • timeRatio capped at 1. A renewal stacks runway onto an earlier payment,
+ *    so some remaining days were funded by a payment we are not refunding;
+ *    capping at the latest payment's own amount is the conservative choice
+ *    rather than reconstructing a multi-payment ledger.
+ *  • quotaRatio measured over the CURRENT window only, for the same reason —
+ *    a stacked period can span two windows, and crediting future windows we
+ *    have not reached would over-refund. Same conservatism as the time cap.
+ *  • Unmetered plans (Elite, jobApplicationLimit null or 0) have no quota
+ *    term at all: their consumption genuinely is time-linear.
+ *
+ * @returns {{credit:number, reason:string, timeRatio:number, quotaRatio:number}}
+ *   credit is an integer in the smallest currency unit (paise).
+ */
+const computeProratedCredit = async (existingActive, oldPlan, now = new Date()) => {
+  const none = (reason) => ({ credit: 0, reason, timeRatio: 0, quotaRatio: 0 });
+
+  if (!existingActive?.payment) return none('no_cash_paid');
+  const oldPayment = await Payment.findById(existingActive.payment).select('amount status').lean();
+  if (!oldPayment || oldPayment.status !== 'paid' || !(oldPayment.amount > 0)) return none('no_cash_paid');
+
+  const intervalDays = Number(oldPlan?.intervalDays) || 30;
+
+  const daysRemaining = Math.max(0, existingActive.currentPeriodEnd.getTime() - now.getTime()) / MS_PER_DAY;
+  const timeRatio = Math.min(1, daysRemaining / intervalDays);
+
+  const limit = oldPlan?.jobApplicationLimit;
+  const metered = limit != null && limit > 0;
+  let quotaRatio = 1;
+  if (metered) {
+    const usage = await getQuotaUsage(existingActive.user, existingActive, oldPlan, now);
+    quotaRatio = Math.min(1, Math.max(0, usage.applicationsRemaining / limit));
+  }
+
+  const unusedRatio = Math.min(timeRatio, quotaRatio);
+
+  // Rounded ONCE, on the complete product — rounding the ratio or the
+  // pre-share subtotal first would compound the error into the final paise.
+  const credit = Math.round(oldPayment.amount * unusedRatio * PRORATION_USER_SHARE);
+
+  let reason = 'partial';
+  if (credit === 0) {
+    if (metered && quotaRatio === 0) reason = 'quota_exhausted';
+    else if (timeRatio === 0) reason = 'no_time_remaining';
+    else reason = 'partial'; // a real but sub-1-paise entitlement
+  }
+
+  return { credit, reason, timeRatio, quotaRatio };
 };
 
 // Shared by the order-creation summary preview AND activate()'s real
@@ -179,6 +244,9 @@ const buildSummary = async ({ payment, plan, reused = false, activated = false, 
     walletApplied: payment.walletApplied || 0,
     proratedCredit: payment.proratedCredit || 0,
     excessProrationCredit: payment.excessProrationCredit || 0,
+    // Lets the summary explain a zero/small credit rather than leaving the
+    // user to read it as a bug. Frozen with the amount it describes.
+    prorationReason: payment.prorationReason || 'not_applicable',
     scenario: payment.scenario,
     priceBreakdown: buildPriceBreakdown(payment),
     reused,
@@ -285,7 +353,9 @@ const createOrder = async ({ user, tier, billingCycle, applyWalletCredit = true 
 
   let oldPlan = null;
   if (isSwitch) {
-    oldPlan = await Plan.findById(existingActive.plan).select('intervalDays').lean();
+    // jobApplicationLimit is needed alongside intervalDays now — proration is
+    // measured against BOTH the time and the quota the old plan granted.
+    oldPlan = await Plan.findById(existingActive.plan).select('intervalDays jobApplicationLimit').lean();
   }
 
   // 4) Server computes the amount — never the client. Region (and therefore
@@ -295,7 +365,11 @@ const createOrder = async ({ user, tier, billingCycle, applyWalletCredit = true 
   //    double discount and an incentive to tier-hop for cheap "first
   //    purchases").
   const baseAmount = isSwitch ? plan.pricing[region].amount : await computeAmount(plan, user._id, region);
-  const proratedCredit = isSwitch ? await computeProratedCredit(existingActive, oldPlan?.intervalDays) : 0;
+  const proration = isSwitch
+    ? await computeProratedCredit(existingActive, oldPlan)
+    : { credit: 0, reason: 'not_applicable' };
+  const proratedCredit = proration.credit;
+  const prorationReason = proration.reason;
   const excessProrationCredit = isSwitch ? Math.max(0, proratedCredit - baseAmount) : 0;
   const amountAfterProration = Math.max(0, baseAmount - proratedCredit);
 
@@ -329,6 +403,7 @@ const createOrder = async ({ user, tier, billingCycle, applyWalletCredit = true 
     previousSubscription: isSwitch ? existingActive._id : null,
     proratedCredit,
     excessProrationCredit,
+    prorationReason,
     scenario,
     currency,
     tier,
@@ -434,6 +509,18 @@ const activate = async (payment, { gatewayPaymentId = null, signature = null } =
     .sort({ currentPeriodEnd: -1 });
   const { end: periodEnd } = computeNewPeriod(existingActive, plan, isSwitch, now);
 
+  // Quota cadence. A RENEWAL inherits the existing anchor so application
+  // resets keep landing on the same date the user has always had them — a
+  // renewal may be taken up to 7 days early, and re-anchoring to `now` would
+  // drag the reset 7 days earlier every cycle (~15.9 windows a year against 12
+  // payments on a monthly plan). A first purchase or a plan SWITCH is a new
+  // entitlement, so it starts a fresh cadence from today.
+  // The currentPeriodStart fallback covers subscriptions created before this
+  // field existed, so this is correct even before the backfill runs.
+  const quotaAnchor = isSwitch
+    ? now
+    : (existingActive?.quotaAnchor || existingActive?.currentPeriodStart || now);
+
   // Supersede the prior active subscription (renewal replaces it with the extended one).
   await Subscription.updateMany(
     { user: paid.user, status: 'active' },
@@ -448,6 +535,7 @@ const activate = async (payment, { gatewayPaymentId = null, signature = null } =
     status: 'active',
     currentPeriodStart: now,
     currentPeriodEnd: periodEnd,
+    quotaAnchor,
     payment: paid._id,
   });
 
@@ -770,6 +858,10 @@ const listAdminSubscriptions = async (query) => {
 
 module.exports = {
   getActivePlans,
+  // Exported for the proration test harness — pure arithmetic over two reads,
+  // and the single place the credit figure is decided, so it is worth being
+  // able to assert exact paise against it directly.
+  computeProratedCredit,
   createOrder,
   activate, // exported for payment.service.js's type-dispatch (reconcile + webhook)
   verifyPayment,

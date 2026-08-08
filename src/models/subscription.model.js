@@ -31,6 +31,19 @@ const subscriptionSchema = new mongoose.Schema(
     currentPeriodStart: { type: Date, required: true },
     currentPeriodEnd: { type: Date, required: true },
 
+    // Origin of the application-quota cadence. Quota windows are fixed
+    // `plan.intervalDays` slices measured forward from this instant, so a plan
+    // bought on 20 Feb resets on 20 Mar, 20 Apr, and so on.
+    //
+    // CARRIED FORWARD UNCHANGED ON RENEWAL, and only reset on a first purchase
+    // or a plan switch. That distinction is load-bearing: renewals are allowed
+    // up to 7 days early and stack their time onto the old period, so anchoring
+    // to the new subscription's own currentPeriodStart would advance the reset
+    // 7 days early every cycle — ~15.9 quota windows a year against 12
+    // payments on a monthly plan. Anchoring the cadence instead of the document
+    // keeps resets on a stable date no matter when the user renews.
+    quotaAnchor: { type: Date, default: null },
+
     payment: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Payment',

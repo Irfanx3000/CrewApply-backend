@@ -86,6 +86,20 @@ const config = {
     bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS, 10) || 10,
     maxLoginAttempts: parseInt(process.env.MAX_LOGIN_ATTEMPTS, 10) || 5,
     lockDurationMinutes: parseInt(process.env.LOCK_DURATION_MINUTES, 10) || 30,
+    // Whether a failed login tells the user how many attempts remain before
+    // the 30-minute lockout. ON by default: being locked out for half an hour
+    // with no prior warning is a genuinely bad experience for the far more
+    // common case (a real user mistyping their own password).
+    //
+    // TRADE-OFF, read before changing: the countdown is only returned for an
+    // account that actually exists, so it lets someone probe whether an email
+    // or phone number is registered — the one thing every other response on
+    // this endpoint is careful not to reveal. The exposure is bounded by
+    // authLimiter (10 attempts / 15 min / IP) and by the lockout itself, and
+    // a 423 lockout already implies the account exists. Set
+    // REVEAL_REMAINING_LOGIN_ATTEMPTS=false to trade the warning back for
+    // strict enumeration resistance.
+    revealRemainingAttempts: process.env.REVEAL_REMAINING_LOGIN_ATTEMPTS !== 'false',
     emailVerificationExpiryHours: 24,
   },
 

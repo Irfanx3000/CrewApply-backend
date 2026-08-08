@@ -1,6 +1,6 @@
 'use strict';
 
-const { BLOCK_TYPES: T, block } = require('./blocks');
+const { BLOCK_TYPES: T, REGIONS, block } = require('./blocks');
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -35,9 +35,12 @@ function buildHeader(content, layout) {
   const { personal, contact } = content;
   if (!personal) return null;
 
-  const contactLine = [contact?.email, contact?.phone, contact?.currentLocation || contact?.city]
-    .filter(Boolean)
-    .join('  •  ');
+  // A template that gives Contact its own section switches this off, so the
+  // same email/phone doesn't appear twice on one page.
+  const showContactLine = layout.header?.showContactLine !== false;
+  const contactLine = showContactLine
+    ? [contact?.email, contact?.phone, contact?.currentLocation || contact?.city].filter(Boolean).join('  •  ')
+    : null;
 
   return block(T.HEADER, {
     name: personal.fullName,
@@ -45,28 +48,78 @@ function buildHeader(content, layout) {
     photo: visible(layout.visibilityRules, 'personal.photo', layout.header?.showPhoto) ? personal.avatarUrl : null,
     contactLine,
     headerStyle: layout.header?.style || 'centered',
+    photoShape: layout.header?.photoShape || 'circle',
+    photoSize: layout.header?.photoSize || 60,
+    photoRingWidth: layout.header?.photoRingWidth || 0,
+    photoRingColor: layout.header?.photoRingColor || null,
+    nameLetterSpacing: layout.typography?.nameLetterSpacing || 0,
   });
+}
+
+// Contact as a standalone SECTION rather than the header's one-line strip —
+// what a sidebar layout needs, where each detail gets its own icon'd row.
+// Icon names are resolved by the renderer (engine/renderers/pdf/icons.js), so
+// nothing here knows what a "phone" actually looks like.
+function buildContactSection(content) {
+  const c = content.contact;
+  if (!c) return null;
+  const rows = [
+    c.phone && { icon: 'phone', text: c.phone },
+    c.email && { icon: 'email', text: c.email },
+    (c.currentLocation || [c.city, c.country].filter(Boolean).join(', ')) && {
+      icon: 'location',
+      text: c.currentLocation || [c.city, c.country].filter(Boolean).join(', '),
+    },
+  ].filter(Boolean);
+  if (!rows.length) return null;
+
+  return block(T.SECTION, { title: 'Contact' }, rows.map((r) => block(T.ICON_TEXT, r)));
 }
 
 function buildObjective(content, layout) {
   if (!visible(layout.visibilityRules, 'personal.summary', true)) return null;
   const text = content.objectiveOverride || content.careerObjective;
   if (!text) return null;
-  return block(T.PARAGRAPH, { text });
+  return block(T.PARAGRAPH, { text, align: layout.typography?.paragraphAlign || 'left' });
 }
 
-function buildMaritimeSection(content) {
+// The objective wrapped in its own titled section — the two-column path needs
+// it as an addressable section key ('summary') it can place in a column,
+// whereas the single-column path emits it bare, directly under the header.
+function buildSummarySection(content, layout) {
+  const paragraph = buildObjective(content, layout);
+  if (!paragraph) return null;
+  return block(T.SECTION, { title: sectionTitleFor('summary', layout) }, [paragraph]);
+}
+
+function buildMaritimeSection(content, sectionLayouts) {
   const m = content.maritime;
   if (!m) return null;
-  const items = [
-    m.department && `Department: ${m.department}`,
-    m.rank && `Rank: ${m.rank}`,
-    m.currentVessel && `Current Vessel: ${m.currentVessel}`,
-    m.seaExperienceYears && `Sea Experience: ${m.seaExperienceYears} years`,
-    m.availabilityDate && `Available From: ${formatDate(m.availabilityDate)}`,
+  const labelValue = sectionLayouts?.maritime?.display === 'labelValue';
+
+  const pairs = [
+    m.department && { label: 'Department', value: m.department },
+    m.rank && { label: 'Rank', value: m.rank },
+    // Designation is only carried in the label/value treatment. The bullet
+    // list is left exactly as it was, so the three pre-existing templates
+    // print the same lines they always did.
+    labelValue && m.designation && { label: 'Designation', value: m.designation },
+    m.currentVessel && { label: 'Current Vessel', value: m.currentVessel },
+    m.seaExperienceYears && { label: 'Sea Experience', value: `${m.seaExperienceYears} years` },
+    m.availabilityDate && { label: 'Available From', value: formatDate(m.availabilityDate) },
   ].filter(Boolean);
-  if (!items.length) return null;
-  return block(T.SECTION, { title: 'Maritime Profile' }, [block(T.BULLET_LIST, { items })]);
+  if (!pairs.length) return null;
+
+  // 'labelValue' stacks each pair as its own row — legible in a narrow sidebar.
+  if (labelValue) {
+    return block(T.SECTION, { title: 'Maritime Profile' }, [
+      block(T.LABEL_VALUE_LIST, { items: pairs, layout: sectionLayouts.maritime.rowLayout || 'stacked' }),
+    ]);
+  }
+
+  return block(T.SECTION, { title: 'Maritime Profile' }, [
+    block(T.BULLET_LIST, { items: pairs.map((p) => `${p.label}: ${p.value}`) }),
+  ]);
 }
 
 function buildExperienceSection(content, sectionLayouts) {
@@ -74,12 +127,35 @@ function buildExperienceSection(content, sectionLayouts) {
   if (!entries.length) return null;
   const display = sectionLayouts?.experience?.display || 'timeline';
 
+  // 'right' splits the meta line: subtitle flush left, dates flush right —
+  // the two-column arrangement the reference designs use. Anything else keeps
+  // the original single muted "subtitle • dates" line.
+  const dateAlign = sectionLayouts?.experience?.dateAlign || 'inline';
+  const bulletStyle = sectionLayouts?.experience?.bulletStyle;
+  // 'full' spells out employer, vessel type and port on the meta line, which
+  // is what a design with a dedicated left-aligned meta row can carry. The
+  // default stays the original single field so existing templates are
+  // untouched.
+  const subtitleMode = sectionLayouts?.experience?.subtitle || 'short';
+
   const items = entries.map((e) =>
     block(T.TIMELINE_ITEM, {
       title: [e.role, e.vesselName || e.company].filter(Boolean).join(' — '),
-      subtitle: e.vesselType || e.company || null,
+      subtitle: subtitleMode === 'full'
+        ? [e.company, e.vesselType, e.location].filter(Boolean).join(' – ') || null
+        : e.vesselType || e.company || null,
       dateRange: dateRange(e.startDate, e.endDate, e.isCurrent),
-    }, e.responsibilities?.length ? [block(T.BULLET_LIST, { items: e.responsibilities })] : [])
+      dateAlign,
+    }, e.responsibilities?.length
+      // COPIED, never the array from `content`. pdfmake's list preprocessor
+      // normalizes `ul` items IN PLACE — it replaces each string with an
+      // object carrying inline metadata and laid-out pixel positions. Handing
+      // it the composer's own array meant rendering silently rewrote the
+      // resolved content, which then poisoned the content hash computed from
+      // it (see resumeRender.service.js) and left every resume permanently
+      // "out of date". The IDM must never alias composer output.
+      ? [block(T.BULLET_LIST, { items: [...e.responsibilities], bulletStyle })]
+      : [])
   );
 
   return block(T.SECTION, { title: 'Experience' }, [
@@ -87,14 +163,20 @@ function buildExperienceSection(content, sectionLayouts) {
   ]);
 }
 
-function buildEducationSection(content) {
+function buildEducationSection(content, sectionLayouts) {
   const entries = content.education || [];
   if (!entries.length) return null;
+  // The reference stacks degree / dates / institution on three lines with the
+  // institution italicised, rather than the default "institution • dates"
+  // meta line — 'stacked' selects that.
+  const stacked = sectionLayouts?.education?.display === 'stacked';
   const items = entries.map((e) =>
     block(T.TIMELINE_ITEM, {
       title: [e.degree, e.fieldOfStudy].filter(Boolean).join(', ') || e.institution,
-      subtitle: e.institution,
+      subtitle: stacked ? null : e.institution,
       dateRange: dateRange(e.startDate, e.endDate, false),
+      footnote: stacked ? e.institution : null,
+      dateAlign: stacked ? 'below' : 'inline',
     })
   );
   return block(T.SECTION, { title: 'Education' }, [block(T.TIMELINE, {}, items)]);
@@ -121,17 +203,32 @@ function buildCertificatesSection(content, sectionLayouts) {
   return block(T.SECTION, { title: 'Certificates' }, [block(T.BULLET_LIST, { items: entries.map((c) => c.name) })]);
 }
 
-function buildSkillsSection(content) {
+function buildSkillsSection(content, sectionLayouts) {
   const entries = content.skills || [];
   if (!entries.length) return null;
   return block(T.SECTION, { title: 'Skills' }, [
-    block(T.BULLET_LIST, { items: entries.map((s) => (s.level ? `${s.name} (${s.level})` : s.name)) }),
+    block(T.BULLET_LIST, {
+      items: entries.map((s) => (s.level ? `${s.name} (${s.level})` : s.name)),
+      bulletStyle: sectionLayouts?.skills?.bulletStyle,
+      columns: sectionLayouts?.skills?.columns,
+    }),
   ]);
 }
 
-function buildLanguagesSection(content) {
+function buildLanguagesSection(content, sectionLayouts) {
   const entries = content.languages || [];
   if (!entries.length) return null;
+  // Two treatments: the original "English — Fluent" bullet, or a label/value
+  // row where the proficiency sits in its own aligned column.
+  if (sectionLayouts?.languages?.display === 'labelValue') {
+    return block(T.SECTION, { title: 'Languages' }, [
+      block(T.LABEL_VALUE_LIST, {
+        items: entries.map((l) => ({ label: l.name, value: l.proficiency })),
+        layout: sectionLayouts.languages.rowLayout || 'inline',
+        bulletStyle: sectionLayouts.languages.bulletStyle,
+      }),
+    ]);
+  }
   return block(T.SECTION, { title: 'Languages' }, [
     block(T.BULLET_LIST, { items: entries.map((l) => `${l.name} — ${l.proficiency}`) }),
   ]);
@@ -149,19 +246,46 @@ function buildReferencesSection(content, layout) {
 }
 
 const SECTION_BUILDERS = {
-  maritime: (content) => buildMaritimeSection(content),
+  contact: (content) => buildContactSection(content),
+  summary: (content, layout) => buildSummarySection(content, layout),
+  maritime: (content, layout) => buildMaritimeSection(content, layout.sectionLayouts),
   experience: (content, layout) => buildExperienceSection(content, layout.sectionLayouts),
-  education: (content) => buildEducationSection(content),
+  education: (content, layout) => buildEducationSection(content, layout.sectionLayouts),
   certificates: (content, layout) => buildCertificatesSection(content, layout.sectionLayouts),
-  skills: (content) => buildSkillsSection(content),
-  languages: (content) => buildLanguagesSection(content),
+  skills: (content, layout) => buildSkillsSection(content, layout.sectionLayouts),
+  languages: (content, layout) => buildLanguagesSection(content, layout.sectionLayouts),
   references: (content, layout) => buildReferencesSection(content, layout),
 };
 
-// content: resolved, self-contained data from resumeComposer.resolveContent()
-// layout:  ResumeTemplate.layout
-// Returns: { page, blocks: Block[] }
-function buildDocumentModel(content, layout) {
+// Lets a template rename a section without touching code — "Profile" vs
+// "About Me" vs "Career Objective" is a design decision, not an engine one.
+function sectionTitleFor(key, layout, fallback) {
+  return layout.sectionTitles?.[key] || fallback || 'Profile';
+}
+
+// Builds the sections named in `keys`, in that order, skipping ones the
+// template has hidden and ones with nothing to show.
+function buildSections(keys, content, layout) {
+  const out = [];
+  for (const key of keys || []) {
+    if (key === 'personal' || key === 'contact:header') continue;
+    const builder = SECTION_BUILDERS[key];
+    if (!builder) continue;
+    if (visible(layout.visibilityRules, key, true) === false) continue;
+    const sectionBlock = builder(content, layout);
+    if (sectionBlock) out.push(sectionBlock);
+  }
+  return out;
+}
+
+function buildCustomSections(content) {
+  return (content.customSections || []).map((custom) =>
+    block(T.SECTION, { title: custom.title }, [block(T.PARAGRAPH, { text: String(custom.content ?? '') })])
+  );
+}
+
+// ── Single column — the original arrangement, unchanged ────────────────────
+function buildSingleColumn(content, layout) {
   const blocks = [];
 
   const header = buildHeader(content, layout);
@@ -177,23 +301,68 @@ function buildDocumentModel(content, layout) {
   }
 
   const order = (layout.sectionOrder || []).filter((key) => key !== 'personal' && key !== 'contact');
-  for (const key of order) {
-    const builder = SECTION_BUILDERS[key];
-    if (!builder) continue;
-    if (visible(layout.visibilityRules, key, true) === false) continue;
-    const sectionBlock = builder(content, layout);
-    if (sectionBlock) blocks.push(sectionBlock);
-  }
+  blocks.push(...buildSections(order, content, layout));
+  blocks.push(...buildCustomSections(content));
 
-  for (const custom of content.customSections || []) {
-    blocks.push(block(T.SECTION, { title: custom.title }, [block(T.PARAGRAPH, { text: String(custom.content ?? '') })]));
+  return blocks;
+}
+
+// ── Two columns ────────────────────────────────────────────────────────────
+// One COLUMNS block holding two independent block stacks. Each column names
+// the palette region it is painted in, which is the whole mechanism behind the
+// dark sidebar: no block carries a colour, it inherits the region it lands in.
+// pdfmake flows both columns across page breaks on its own, so a long resume
+// simply continues — verified, not assumed.
+function buildTwoColumn(content, layout) {
+  const sidebarOn = !!layout.page?.sidebar?.enabled;
+  const leftRegion = sidebarOn ? REGIONS.SIDEBAR : REGIONS.MAIN;
+
+  const left = [];
+  // In sidebar placement the identity block (photo, name, headline) opens the
+  // sidebar instead of spanning the page.
+  if (layout.header?.placement === 'sidebar') {
+    const header = buildHeader(content, layout);
+    if (header) left.push(header);
   }
+  left.push(...buildSections(layout.columns.left, content, layout));
+
+  const right = [];
+  if (layout.header?.placement !== 'sidebar') {
+    const header = buildHeader(content, layout);
+    if (header) right.push(header);
+  }
+  right.push(...buildSections(layout.columns.right, content, layout));
+  right.push(...buildCustomSections(content));
+
+  const leftRatio = layout.columns.leftRatio || 0.35;
+
+  return [
+    block(
+      T.COLUMNS,
+      {
+        widths: [`${(leftRatio * 100).toFixed(4)}%`, '*'],
+        regions: [leftRegion, REGIONS.MAIN],
+        padding: layout.spacing?.columnPadding ?? 24,
+        paddingTop: layout.spacing?.columnPaddingTop ?? layout.spacing?.columnPadding ?? 24,
+      },
+      [left, right]
+    ),
+  ];
+}
+
+// content: resolved, self-contained data from resumeComposer.resolveContent()
+// layout:  ResumeTemplate.layout
+// Returns: { page, blocks: Block[] }
+function buildDocumentModel(content, layout) {
+  const twoColumn = (layout.columns?.left || []).length > 0;
+  const blocks = twoColumn ? buildTwoColumn(content, layout) : buildSingleColumn(content, layout);
 
   return {
     page: layout.page || {},
     typography: layout.typography || {},
     colors: layout.colors || {},
     spacing: layout.spacing || {},
+    sectionTitle: layout.sectionTitle || {},
     blocks,
   };
 }
