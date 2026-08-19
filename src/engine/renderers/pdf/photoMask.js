@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const sharp = require('sharp');
 
+const { MAX_INPUT_PIXELS } = require('../../../utils/image.util');
 // pdfmake can place an image but cannot clip one — there is no border-radius
 // and no clipping path in its content vocabulary. A circular avatar therefore
 // has to arrive already circular, so this bakes the mask into a PNG with a
@@ -67,7 +68,12 @@ async function circularPhoto(absoluteSourcePath, { size = 180, ringWidth = 0, ri
       composites.push({ input: ringSvg, blend: 'over' });
     }
 
-    await sharp(absoluteSourcePath)
+    // Same decompression-bomb ceiling as every other sharp entry point (see
+    // image.util.js). The source here is an already-stored, already-resized
+    // profile photo rather than raw user input, so this is belt-and-braces —
+    // but leaving one sharp() call in the codebase without the limit is how
+    // that stops being true after the next refactor.
+    await sharp(absoluteSourcePath, { limitInputPixels: MAX_INPUT_PIXELS })
       .resize(size, size, { fit: 'cover', position: 'attention' })
       .composite(composites)
       .png()

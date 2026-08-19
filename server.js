@@ -6,6 +6,7 @@ const { validateEnv, config } = require('./src/config');
 const app = require('./app');
 const connectDB = require('./src/config/db');
 const subscriptionExpiryJob = require('./src/jobs/subscriptionExpiry.job');
+const tempSweepJob = require('./src/jobs/tempSweep.job');
 
 const startServer = async () => {
   try {
@@ -14,6 +15,9 @@ const startServer = async () => {
 
     await connectDB();
     subscriptionExpiryJob.start();
+    // Reclaims upload temp files stranded by aborted requests — see the job
+    // for why the normal upload paths do not cover that case.
+    tempSweepJob.start();
 
     app.listen(config.port, () => {
       console.log('===========================================');
