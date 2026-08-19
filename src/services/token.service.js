@@ -162,10 +162,43 @@ const validateRefreshToken = async (rawToken) => {
 const rotateRefreshToken = async (oldTokenDoc, context = {}) => {
   const { rawToken, hashedToken } = generateTokenPair(40);
 
-  // Mark old token as revoked and record the replacement for audit purposes.
-  oldTokenDoc.isRevoked = true;
-  oldTokenDoc.replacedByTokenHash = hashedToken;
-  await oldTokenDoc.save();
+  // Revoke ATOMICALLY, and treat losing the race as a race -- not as theft.
+  //
+  // This was previously a read-modify-save (set isRevoked, then save), which
+  // left a window where two concurrent presentations of the SAME refresh token
+  // could both observe isRevoked:false and both proceed to rotate. The loser
+  // then came back through validateRefreshToken(), hit the reuse-detection
+  // branch, and triggered its deliberately aggressive response:
+  // RefreshToken.deleteMany({ userId }) -- every session on every device, gone.
+  //
+  // The mobile client queues concurrent 401s behind a single refresh, which
+  // hides this in-process, but not across an app restart mid-refresh, a
+  // background push handler waking the app, or a second device. The symptom is
+  // the worst kind: a user silently signed out everywhere, with no way to
+  // reproduce it.
+  //
+  // findOneAndUpdate with isRevoked:false in the FILTER makes exactly one
+  // caller win. A null result means someone else already rotated this token
+  // microseconds ago -- a benign race, not a stolen token -- so we surface it
+  // as an ordinary "try again" rather than destroying the user's sessions.
+  //
+  // Genuine reuse detection is UNCHANGED and still fires: presenting an
+  // already-revoked token still reaches validateRefreshToken's isRevoked check
+  // and still wipes the token family. This narrows the false positive only.
+  // No `new`/`returnDocument` option: only whether a document MATCHED matters,
+  // and passing one raises a deprecation warning on Mongoose 9.
+  const claimed = await RefreshToken.findOneAndUpdate(
+    { _id: oldTokenDoc._id, isRevoked: false },
+    { isRevoked: true, replacedByTokenHash: hashedToken }
+  );
+
+  if (!claimed) {
+    throw new AppError(
+      AUTH_MESSAGES.INVALID_REFRESH_TOKEN,
+      HTTP_STATUS.UNAUTHORIZED,
+      'REFRESH_IN_PROGRESS'
+    );
+  }
 
   await RefreshToken.create({
     userId: oldTokenDoc.userId,

@@ -205,6 +205,39 @@ const config = {
  * Validates that all required environment variables are present.
  * Call this once at server startup — fail fast if config is incomplete.
  */
+// A JWT signing secret shorter than this is brute-forceable offline: an
+// attacker only needs one token this server has ever issued, and can then mint
+// a valid access token for ANY user id, including an admin. 32 characters is
+// the widely-used floor for HS256 (it matches the 256-bit output the algorithm
+// assumes).
+const MIN_JWT_SECRET_LENGTH = 32;
+
+// Placeholder values that show up in tutorials, .env.example files and
+// copy-pasted configs. Any of these in production means the secret is
+// effectively public.
+const WEAK_SECRET_VALUES = new Set([
+  'secret', 'jwtsecret', 'jwt_secret', 'changeme', 'change_me', 'password',
+  'mysecret', 'supersecret', 'your-secret-key', 'your_jwt_secret', 'test',
+  'development', 'dev', 'accesssecret', 'refreshsecret',
+]);
+
+/**
+ * Boot-time environment validation.
+ *
+ * Presence is enforced everywhere. Secret STRENGTH is enforced only in
+ * production, and deliberately so: failing a developer's machine over a short
+ * throwaway secret is friction with no security value, whereas booting
+ * production with a guessable signing key is a total compromise of every
+ * session.
+ *
+ * IMPORTANT -- this never rotates anything. If a live secret turns out to be
+ * weak, the correct response is a planned rotation during a maintenance window,
+ * because changing either secret invalidates every access token AND every
+ * refresh token in circulation: every user on every device is signed out at
+ * once. That has to be a scheduled decision, never a side effect of a deploy.
+ * The error below says exactly that, so whoever hits it is not tempted to
+ * "just change it" on a live system.
+ */
 const validateEnv = () => {
   const required = [
     'MONGODB_URI',
@@ -218,6 +251,41 @@ const validateEnv = () => {
     throw new Error(
       `Server startup aborted. Missing required environment variables: ${missing.join(', ')}`
     );
+  }
+
+  if (process.env.NODE_ENV !== 'production') return;
+
+  const problems = [];
+  for (const key of ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET']) {
+    const value = process.env[key];
+    if (value.length < MIN_JWT_SECRET_LENGTH) {
+      problems.push(`${key} is ${value.length} characters; at least ${MIN_JWT_SECRET_LENGTH} are required.`);
+    }
+    if (WEAK_SECRET_VALUES.has(value.trim().toLowerCase())) {
+      problems.push(`${key} is a well-known placeholder value.`);
+    }
+  }
+
+  // Reusing one secret for both token types means a refresh token can be
+  // presented as an access token and vice versa; only the `type` claim would
+  // separate them, which is a single check away from being a full bypass.
+  if (process.env.JWT_ACCESS_SECRET === process.env.JWT_REFRESH_SECRET) {
+    problems.push('JWT_ACCESS_SECRET and JWT_REFRESH_SECRET are identical; they must differ.');
+  }
+
+  if (problems.length > 0) {
+    const lines = [
+      'Server startup aborted -- insecure JWT configuration:',
+      ...problems.map((p) => `  - ${p}`),
+      '',
+      'Generate strong values with:',
+      '  node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'base64url\'))"',
+      '',
+      'NOTE: rotating either secret signs out every user on every device, because',
+      'it invalidates every access token AND every refresh token in circulation.',
+      'Schedule it as a maintenance action -- do not change it silently on a live server.',
+    ];
+    throw new Error(lines.join('\n'));
   }
 };
 
