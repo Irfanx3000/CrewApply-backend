@@ -5,6 +5,7 @@ const Notification = require('../models/notification.model');
 const User = require('../models/user.model');
 const pushService = require('./push.service');
 const emailService = require('./email.service');
+const { mapWithConcurrency } = require('../utils/concurrency.util');
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
@@ -59,21 +60,56 @@ const notifyAdmins = async ({ type, title, body, data = null }) => {
   }
 };
 
+// ── Job-alert fan-out ─────────────────────────────────────────────────────────
+//
+// How many users are held in memory, and written, at a time. 500 keeps the
+// insertMany payload well inside MongoDB's 16 MB limit (a notification doc is a
+// few hundred bytes) while keeping the number of round trips small.
+const FANOUT_BATCH_SIZE = 500;
+
+// Concurrent push/email sends within a batch. These are outbound calls to
+// Firebase and the mail provider, so this is really a politeness limit on how
+// hard we hammer them — high enough that a 500-user batch drains quickly, low
+// enough that a large fan-out cannot exhaust sockets or trip provider rate
+// limits. Deliberately NOT the same as the batch size.
+const FANOUT_SEND_CONCURRENCY = 20;
+
 /**
  * Notifies every user whose active subscription tier qualifies for this job
- * (same "at least this tier" rule application.service.js gates applying
- * with — see plan.model.js's isTierSufficient/TIER_RANK) that it was just
- * posted. One independent Notification doc per eligible user, same shape
- * as notifyAdmins() above. Never throws — a job-posting request must
- * succeed regardless of how many (or how few) users end up notified.
+ * (same "at least this tier" rule application.service.js gates applying with —
+ * see plan.model.js's isTierSufficient/TIER_RANK) that it was just posted, plus
+ * anyone who opted into the job's category via User.preferredCategories. One
+ * independent Notification doc per eligible user, same shape as notifyAdmins()
+ * above. Never throws — a job-posting request must succeed regardless of how
+ * many (or how few) users end up notified.
  *
  * Channel is tier-gated, matching the Plan.features copy shown on the
  * Subscription screen: Crew Start is "Job alerts (App)" — in-app/push only —
  * while Premium and Elite (both "Email + App") also get an email via
  * emailService. Premium and Elite are intentionally identical here — Elite
- * differentiates via its uncapped application limit, not an extra channel.
- * The in-app notification (and its push send, inside create()) always fires
- * regardless of tier; email is the one tier-gated extra channel.
+ * differentiates via its uncapped application limit, not an extra channel. The
+ * in-app notification (and its push send) always fires regardless of tier;
+ * email is the one tier-gated extra channel.
+ *
+ * ALL OF THAT USER-VISIBLE BEHAVIOUR IS UNCHANGED. What changed is how the work
+ * is executed.
+ *
+ * Previously: two unbounded find()s loaded every matching user into memory,
+ * merged them through a JS Map, then ran ONE unbounded Promise.all over the
+ * whole set — a Notification.create(), a push (which re-fetched that same user
+ * by id), and an email, per person. At 500 users that is fine. At 20,000 it is
+ * an event-loop stall, a memory spike, 20,000 extra queries, and an immediate
+ * rate-limit block from the mail provider. It also failed as a unit: one
+ * rejection abandoned every task that had not yet settled.
+ *
+ * Now:
+ *   ONE $or query, streamed through a cursor   (MongoDB does the union AND the
+ *                                               de-duplication)
+ *        -> batches of FANOUT_BATCH_SIZE
+ *             -> insertMany(ordered: false)     one write per batch, not per user
+ *             -> bounded-concurrency sends      push + email, failures isolated
+ *
+ * Still fire-and-forget from job.service, so publishing a job never waits on it.
  */
 const notifyEligibleUsersForJob = async (job) => {
   try {
@@ -81,40 +117,90 @@ const notifyEligibleUsersForJob = async (job) => {
     const qualifyingTiers = PLAN_TIERS.filter((tier) => TIER_RANK[tier] >= minRank);
 
     // Two independent match reasons — plan-tier eligibility, and a user's own
-    // opted-in category preferences (see User.preferredCategories) — merged
-    // and de-duplicated by _id so nobody gets two notifications for the same
-    // job just because they qualify both ways.
-    const [tierUsers, categoryUsers] = await Promise.all([
-      User.find({
-        subscriptionStatus: 'active',
-        subscriptionTier: { $in: qualifyingTiers },
-      }).select('_id email subscriptionTier'),
-      job.category
-        ? User.find({ preferredCategories: job.category }).select('_id email subscriptionTier')
-        : Promise.resolve([]),
-    ]);
-    const users = Array.from(
-      new Map([...tierUsers, ...categoryUsers].map((u) => [String(u._id), u])).values()
-    );
+    // opted-in category preferences — expressed as a single $or so the database
+    // performs the union and the de-duplication. Previously these were two
+    // separate queries merged through a Map keyed on _id; $or returns each
+    // document exactly once even when it matches both arms, which is the same
+    // no-duplicates guarantee with none of the memory. Both arms are
+    // index-backed — see the fan-out indexes in user.model.js.
+    const matchReasons = [
+      { subscriptionStatus: 'active', subscriptionTier: { $in: qualifyingTiers } },
+    ];
+    if (job.category) matchReasons.push({ preferredCategories: job.category });
 
     const title = 'New job posted';
     const body = `${job.title} at ${job.companyName} was just posted for ${job.rank} — ${job.department}.`;
+    const data = { jobId: job._id };
 
-    await Promise.all(
-      users.map(async (u) => {
-        await create({
-          userId: u._id,
-          type: Notification.NOTIFICATION_TYPES.NEW_JOB_MATCH,
-          title,
-          body,
-          data: { jobId: job._id },
-        });
+    // deviceTokens/pushNotificationsEnabled are select:false, so they have to be
+    // asked for explicitly. Loading them here is what lets pushService skip its
+    // own per-user lookup (see sendToUser's preloadedUser argument): it trades
+    // this query's index-only coverage for the removal of N extra round trips,
+    // which is overwhelmingly the better deal on a fan-out.
+    const cursor = User.find({ $or: matchReasons })
+      .select('_id email subscriptionTier +deviceTokens +pushNotificationsEnabled')
+      .lean()
+      .cursor({ batchSize: FANOUT_BATCH_SIZE });
+
+    let batch = [];
+    let totalNotified = 0;
+    let totalFailedSends = 0;
+
+    const flush = async () => {
+      if (batch.length === 0) return;
+      const users = batch;
+      batch = [];
+
+      // One write for the whole batch instead of one per user. ordered:false so
+      // a single rejected document (e.g. a user deleted mid-fan-out) does not
+      // abort the remainder — failure isolation enforced by the database rather
+      // than by us.
+      try {
+        const inserted = await Notification.insertMany(
+          users.map((u) => ({
+            user: u._id,
+            type: Notification.NOTIFICATION_TYPES.NEW_JOB_MATCH,
+            title,
+            body,
+            data,
+          })),
+          { ordered: false }
+        );
+        totalNotified += inserted.length;
+      } catch (err) {
+        // With ordered:false the driver still throws when ANY document fails,
+        // but the successful ones are already written. Count what landed and
+        // carry on rather than discarding the batch.
+        totalNotified += err?.insertedDocs?.length ?? 0;
+        console.error('NotificationService: partial batch insert:', err.message);
+      }
+
+      // Push + email, bounded and individually isolated: one user's dead device
+      // token or bouncing mailbox must not stop anyone else being told.
+      const sends = await mapWithConcurrency(users, FANOUT_SEND_CONCURRENCY, async (u) => {
+        // Third argument is the already-loaded user, so pushService does not
+        // re-query. pushNotificationsEnabled is respected exactly as before.
+        await pushService.sendToUser(u._id, { title, body, data }, u);
 
         if (u.subscriptionTier !== 'start') {
-          emailService.sendJobAlertEmail(u.email, job).catch(() => {});
+          await emailService.sendJobAlertEmail(u.email, job);
         }
-      })
-    );
+      });
+      totalFailedSends += sends.failed;
+    };
+
+    for await (const user of cursor) {
+      batch.push(user);
+      if (batch.length >= FANOUT_BATCH_SIZE) await flush();
+    }
+    await flush();
+
+    if (totalNotified > 0 || totalFailedSends > 0) {
+      console.log(
+        `NotificationService: job ${job._id} — notified ${totalNotified} user(s)`
+        + (totalFailedSends ? `, ${totalFailedSends} send(s) failed` : '')
+      );
+    }
   } catch (err) {
     console.error('NotificationService: failed to notify eligible users for job:', err.message);
   }

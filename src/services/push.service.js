@@ -61,12 +61,27 @@ const pruneDeadTokens = async (userId, deadTokens) => {
  * Never throws — push failures must not interrupt the caller (this is always
  * invoked fire-and-forget from notification.service.js).
  */
-const sendToUser = async (userId, { title, body, data }) => {
+/**
+ * @param {string} userId
+ * @param {{title:string, body:string, data:object}} payload
+ * @param {object} [preloadedUser] - a user document already carrying
+ *   `deviceTokens` and `pushNotificationsEnabled`. Purely an optimisation for
+ *   callers that have just read the user for their own reasons; when omitted
+ *   the behaviour is byte-for-byte what it always was.
+ *
+ *   The reason it exists: the job-alert fan-out already selects every eligible
+ *   user, and this function then looked each one up AGAIN by id — one extra
+ *   round trip per recipient. At a few thousand recipients that is a few
+ *   thousand sequential round trips to Atlas, which dwarfs the actual push.
+ *   Passing the user through turns N+1 queries into 1.
+ */
+const sendToUser = async (userId, { title, body, data }, preloadedUser = null) => {
   try {
     const firebaseApp = getApp();
     if (!firebaseApp) return; // not configured — silent no-op
 
-    const user = await User.findById(userId).select('+deviceTokens +pushNotificationsEnabled');
+    const user = preloadedUser
+      || await User.findById(userId).select('+deviceTokens +pushNotificationsEnabled');
     if (user?.pushNotificationsEnabled === false) return; // opted out — in-app record still exists
     const tokens = (user?.deviceTokens || []).map((d) => d.token);
     if (!tokens.length) return;
