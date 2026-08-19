@@ -420,6 +420,35 @@ userSchema.index({ phone: 1 }, { unique: true, sparse: true });
 // digits-only values aren't meaningfully text-indexable.
 userSchema.index({ name: 'text', email: 'text' });
 
+// ── Job-alert fan-out indexes ─────────────────────────────────────────────────
+// Both queries in notification.service.js#notifyEligibleUsersForJob were
+// verified COLLSCAN via explain() before these were added — every published job
+// scanned the entire users collection twice.
+//
+// 1) { subscriptionStatus, subscriptionTier: { $in: [...] } }
+//    ESR order: subscriptionStatus is a single equality so it leads;
+//    subscriptionTier is an $in (a multi-equality bound) so it follows.
+//    `email` and `_id` are appended purely to COVER the query. The fan-out
+//    projects exactly { _id, email, subscriptionTier }, and MongoDB only
+//    reports PROJECTION_COVERED when every projected field — _id included —
+//    is an actual index key. Measured with explain() on this collection:
+//        { status, tier, email }        -> FETCH,  6 docs examined
+//        { status, tier, email, _id }   -> COVERED, 0 docs examined
+//    That matters here more than on a typical query, because this one reads
+//    EVERY eligible user at once: covered means N index keys instead of N
+//    index keys plus N full User documents, and a User doc is large (~40
+//    fields including the whole maritimeProfile subdocument).
+//    Cost is a four-key index on low-churn fields — subscriptionStatus and
+//    subscriptionTier are written only on activation and expiry.
+userSchema.index({ subscriptionStatus: 1, subscriptionTier: 1, email: 1, _id: 1 });
+
+// 2) { preferredCategories: <category name> }
+//    preferredCategories is a String array, so this is a multikey index.
+//    Deliberately single-field: multikey indexes cannot cover a query in
+//    MongoDB, so appending email/subscriptionTier here would add write cost
+//    for no read benefit. The FETCH is unavoidable on this path.
+userSchema.index({ preferredCategories: 1 });
+
 // ── Virtuals ──────────────────────────────────────────────────────────────────
 
 userSchema.virtual('isLocked').get(function () {
