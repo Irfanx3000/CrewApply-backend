@@ -109,6 +109,26 @@ app.use(hpp());
 // preventing Mongoose operator injection attacks (e.g. { "email": { "$gt": "" } }).
 // Written inline because express-mongo-sanitize is incompatible with Express 5
 // (it attempts to reassign the read-only req.query getter).
+//
+// ── SECURITY ASSUMPTION: req.query is NOT sanitised here, and does not need to be
+// ── while Express 5's DEFAULT 'simple' query parser is in use. Do not change it.
+//
+// The simple parser (Node's own querystring) produces flat string values only.
+// A crafted `?rank[$ne]=x` arrives as a literal key named "rank[$ne]" whose
+// value is a string -- it never becomes the nested object { rank: { $ne: 'x' } }
+// that an operator-injection attack needs. Verified against this API:
+// GET /api/v1/jobs?rank[$ne]=zzz returns a normal unfiltered result set.
+//
+// Setting `app.set('query parser', 'extended')` (the qs parser) would reverse
+// that: bracket notation WOULD be expanded into real nested objects, and since
+// this middleware deliberately skips req.query, every query-parameter filter in
+// the app would immediately become injectable. If extended parsing is ever
+// genuinely required, sanitise req.query in the same change -- which on Express 5
+// means rewriting the parsed values in place rather than reassigning req.query.
+//
+// Second line of defence, already in place: every list endpoint validates its
+// query parameters through express-validator schemas (see src/validations/),
+// which reject non-string values before they reach a Mongo query.
 app.use((req, _res, next) => {
   const sanitizeKeys = (obj) => {
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return obj;
