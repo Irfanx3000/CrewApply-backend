@@ -434,21 +434,93 @@ function buildStyles(typography, colors) {
   };
 }
 
+// ── Page bands ───────────────────────────────────────────────────────────────
+// Flat colour rectangles painted behind everything, at absolute page
+// coordinates, repeated on every page. Two kinds exist:
+//
+//   sidebar — a full-height strip down the left or right edge
+//   banner  — a strip across the top, either full width or stopping at the
+//             sidebar edge so it covers only the main column
+//
+// They are page DECORATION, not blocks: a block lives in the content stream
+// and cannot guarantee it covers the whole page or repeats after a page break.
+//
+// Returned as {x, y, w, h, color} so exactly one description of the page's
+// painted areas serves both the painter and the watermark. That shared list is
+// the point — see the watermark note below for why two descriptions would be a
+// revenue bug waiting to happen.
+function pageBands(dims, page) {
+  const bands = [];
+  const sidebar = page.sidebar || {};
+  const banner = page.banner || {};
+
+  const sidebarOn = !!sidebar.enabled;
+  const bandWidth = sidebarOn ? dims.width * (sidebar.widthRatio ?? 0.35) : 0;
+  const sidebarOnLeft = sidebar.side !== 'right';
+
+  if (sidebarOn) {
+    bands.push({
+      x: sidebarOnLeft ? 0 : dims.width - bandWidth,
+      y: 0,
+      w: bandWidth,
+      h: dims.height,
+      color: sidebar.color || '#2B303B',
+    });
+  }
+
+  if (banner.enabled) {
+    const height = dims.height * (banner.heightRatio ?? 0.16);
+    // 'main' stops the banner at the sidebar edge, so the two bands sit beside
+    // each other instead of one painting over the other. 'full' spans the page
+    // and is drawn AFTER the sidebar, so it wins where they overlap — which is
+    // what a full-width header band across a sidebar layout should look like.
+    const overMainOnly = banner.span === 'main' && sidebarOn;
+    bands.push({
+      x: overMainOnly && sidebarOnLeft ? bandWidth : 0,
+      y: 0,
+      w: overMainOnly ? dims.width - bandWidth : dims.width,
+      h: height,
+      color: banner.color || '#0D3E85',
+    });
+  }
+
+  return bands;
+}
+
+// Relative luminance (WCAG). Used only to decide whether a band counts as
+// "dark" for watermark contrast — not for any colour maths, so the simple
+// sRGB-weighted form is sufficient and avoids a gamma pass.
+function isDarkColor(hex) {
+  const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(String(hex || ''));
+  if (!m) return false;
+  let h = m[1];
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.55;
+}
+
 // ── Free-tier watermark ────────────────────────────────────────────────────
 // Drawn as page decoration, never as blocks: it has to cover every page in
 // full regardless of how the content flows, which nothing inside the content
 // stream can guarantee. Sitting behind the content also keeps the text crisp.
+//
+// Each tile picks its colour from whatever is painted UNDER it, so the mark
+// stays visible on any template. This used to test one thing only — "is this x
+// over the sidebar strip" — which silently failed the moment a design put dark
+// paint anywhere else: a dark header banner, or a dark page ground, produced
+// dark tiles on a dark field and the watermark effectively vanished. On a
+// free-tier document that is not a cosmetic bug, it is the paid output being
+// given away.
+//
+// It now tests each tile against the SAME band list the painter uses, so a
+// band cannot exist visually without the watermark knowing about it.
 
 const escapeXml = (s) =>
   String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-/**
- * A full-page SVG of rotated, tiled wordmarks. Each tile picks its colour from
- * the region it lands in — light over the sidebar band, dark over the white
- * column — so the mark stays visible on any template without a single colour
- * having to compromise between the two.
- */
-function watermarkTilesSvg(wm, dims, sidebar) {
+function watermarkTilesSvg(wm, dims, bands, pageBackground) {
   const stepX = wm.stepX || 168;
   const stepY = wm.stepY || 116;
   const angle = wm.angle ?? -32;
@@ -458,11 +530,25 @@ function watermarkTilesSvg(wm, dims, sidebar) {
   const opacityOnDark = wm.opacityOnDark ?? Math.min(1, opacity * 1.5);
   const label = escapeXml(wm.text || 'PREVIEW');
 
-  const bandWidth = sidebar?.enabled ? dims.width * (sidebar.widthRatio ?? 0.35) : 0;
-  const bandOnLeft = sidebar?.side !== 'right';
-  const overBand = (x) => {
-    if (!bandWidth) return false;
-    return bandOnLeft ? x < bandWidth : x > dims.width - bandWidth;
+  // Only dark bands matter — a light band takes the same dark tile the white
+  // page does. Reversed so the LAST band painted (the one actually visible at
+  // that point) is the first one matched.
+  const darkBands = bands.filter((b) => isDarkColor(b.color)).reverse();
+  const groundIsDark = isDarkColor(pageBackground);
+
+  const overDark = (x, y) => {
+    // Tiles deliberately start off-page and overrun the far edge so rotation
+    // cannot leave bare corners. Those anchors sit outside every band, so
+    // testing them raw would classify a tile that visually lands ON a dark
+    // band as being over white — a light-on-light sliver at exactly the page
+    // edge. Clamping the anchor into the page asks the question that matters:
+    // what is painted where this tile is actually seen.
+    const cx = Math.min(Math.max(x, 0), dims.width);
+    const cy = Math.min(Math.max(y, 0), dims.height);
+    for (const b of darkBands) {
+      if (cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h) return true;
+    }
+    return groundIsDark;
   };
 
   const tiles = [];
@@ -470,7 +556,7 @@ function watermarkTilesSvg(wm, dims, sidebar) {
   // corners.
   for (let x = -stepX / 2; x < dims.width + stepX; x += stepX) {
     for (let y = stepY / 2; y < dims.height + stepY; y += stepY) {
-      const onDark = overBand(x);
+      const onDark = overDark(x, y);
       const fill = onDark ? '#FFFFFF' : '#1E1E1E';
       const alpha = onDark ? opacityOnDark : opacity;
       tiles.push(
@@ -484,24 +570,32 @@ function watermarkTilesSvg(wm, dims, sidebar) {
 }
 
 /**
- * The footer band. Inset clear of the sidebar so the rule and the copy never
- * run onto the dark band where they'd be unreadable.
+ * The footer band. Inset clear of any full-height side band so the rule and
+ * the copy never run onto dark paint where they'd be unreadable, and recoloured
+ * when the page ground itself is dark.
  */
-function watermarkFooter(wm, dims, sidebar, margins) {
-  const bandWidth = sidebar?.enabled ? dims.width * (sidebar.widthRatio ?? 0.35) : 0;
-  const bandOnLeft = sidebar?.side !== 'right';
-  const left = (bandOnLeft ? bandWidth : 0) + (margins[0] || 24) + 12;
-  const right = (bandOnLeft ? 0 : bandWidth) + (margins[2] || 24) + 12;
+function watermarkFooter(wm, dims, bands, margins, pageBackground) {
+  // Only full-height bands can reach the footer; a top banner cannot.
+  const sideBands = bands.filter((b) => b.h >= dims.height * 0.9);
+  const leftBand = sideBands.find((b) => b.x <= 1);
+  const rightBand = sideBands.find((b) => b.x + b.w >= dims.width - 1);
+
+  const left = (leftBand ? leftBand.w : 0) + (margins[0] || 24) + 12;
+  const right = (rightBand ? rightBand.w : 0) + (margins[2] || 24) + 12;
+
+  const onDark = isDarkColor(pageBackground);
+  const ruleColor = onDark ? '#4A5563' : '#C9D2DE';
+  const textColor = onDark ? '#9AA6B5' : '#8A94A6';
 
   return () => ({
     stack: [
-      { canvas: [{ type: 'line', x1: left, y1: 0, x2: dims.width - right, y2: 0, lineWidth: 0.7, lineColor: '#C9D2DE' }] },
+      { canvas: [{ type: 'line', x1: left, y1: 0, x2: dims.width - right, y2: 0, lineWidth: 0.7, lineColor: ruleColor }] },
       {
         text: wm.footer || '',
         alignment: 'center',
         fontSize: 7,
         characterSpacing: 0.6,
-        color: '#8A94A6',
+        color: textColor,
         margin: [left, 4, right, 0],
       },
     ],
@@ -545,6 +639,10 @@ async function render(documentModel) {
   const { page = {}, typography = {}, colors = {}, spacing = {}, sectionTitle = {}, blocks = [], watermark = null } = documentModel;
 
   const dims = PAGE_DIMENSIONS[page.size] || PAGE_DIMENSIONS.A4;
+  // colors.background was declared in the template schema but never painted —
+  // a template could ask for a dark page and silently get white. Honoured now,
+  // and fed to the watermark so its tiles contrast against it.
+  const pageBackground = colors.background || '#FFFFFF';
   const sidebar = page.sidebar || {};
   const sidebarOn = !!sidebar.enabled;
 
@@ -591,17 +689,28 @@ async function render(documentModel) {
   // belongs to resumeRender.service.js, which reads live subscription state.
   const layers = [];
 
-  if (sidebarOn) {
-    const bandWidth = dims.width * (sidebar.widthRatio ?? 0.35);
-    const x = sidebar.side === 'right' ? dims.width - bandWidth : 0;
+  // One list describes every painted area of the page, and BOTH the painter
+  // and the watermark read it. Keeping a single description is the whole
+  // point: a second, separate notion of "where is it dark" is how the
+  // watermark silently stopped being visible on new designs.
+  const bands = pageBands(dims, page);
+
+  // A dark page ground has to be painted first, under every band.
+  if (pageBackground && pageBackground !== '#FFFFFF') {
     layers.push({
-      canvas: [{ type: 'rect', x, y: 0, w: bandWidth, h: dims.height, color: sidebar.color || '#2B303B' }],
+      canvas: [{ type: 'rect', x: 0, y: 0, w: dims.width, h: dims.height, color: pageBackground }],
+    });
+  }
+
+  for (const band of bands) {
+    layers.push({
+      canvas: [{ type: 'rect', x: band.x, y: band.y, w: band.w, h: band.h, color: band.color }],
     });
   }
 
   if (watermark) {
     layers.push({
-      svg: watermarkTilesSvg(watermark, dims, sidebar),
+      svg: watermarkTilesSvg(watermark, dims, bands, pageBackground),
       width: dims.width,
       absolutePosition: { x: 0, y: 0 },
     });
@@ -610,7 +719,7 @@ async function render(documentModel) {
   if (layers.length) docDefinition.background = () => layers;
 
   if (watermark?.footer) {
-    docDefinition.footer = watermarkFooter(watermark, dims, sidebar, margins);
+    docDefinition.footer = watermarkFooter(watermark, dims, bands, margins, pageBackground);
   }
 
   const urlResolver = new URLResolver(vfs);
@@ -626,4 +735,7 @@ async function render(documentModel) {
   });
 }
 
-module.exports = { render };
+// Exposed for tests only. Where the page is dark is a RENDERER concern —
+// nothing else should decide it — but the watermark-contrast invariant is
+// important enough to pin directly rather than by eyeballing a PDF.
+module.exports = { render, __test: { pageBands, isDarkColor, watermarkTilesSvg, watermarkFooter } };
