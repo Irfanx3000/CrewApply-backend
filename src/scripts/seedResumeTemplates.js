@@ -160,6 +160,190 @@ const TEMPLATES = [
       visibilityRules: { personal: { photo: true, summary: true }, maritime: true, references: false },
     },
   },
+  // ── Added templates ────────────────────────────────────────────────────────
+  // Authored from supplied designs. Each is config only — no template ships
+  // code — and each uses capabilities added alongside it (the banner band,
+  // section-heading glyphs, rating bars). New `key`s, so the upsert below
+  // cannot touch the four templates above.
+  {
+    key: 'charcoal-badge',
+    name: 'Charcoal Badge',
+    description: 'Dark right-hand column with badge-headed sections and rated skill bars — a bold, modern one-page CV.',
+    category: 'general',
+    sortOrder: 40,
+    layout: {
+      page: {
+        size: 'A4',
+        margins: { top: 0, right: 0, bottom: 28, left: 0 },
+        columns: 2,
+        // The dark column runs the full height on the RIGHT, with the identity
+        // block sitting at its top — the mirror of maritime-sidebar.
+        sidebar: { enabled: true, widthRatio: 0.38, side: 'right', color: '#3A3A3A' },
+      },
+      typography: {
+        fontFamily: 'Roboto',
+        baseFontSize: 9,
+        headingScale: 1.55,
+        lineHeight: 1.35,
+        sectionTitleCase: 'upper',
+        nameScale: 1.9,
+        nameLetterSpacing: 0.8,
+        sectionTitleLetterSpacing: 0.6,
+        paragraphAlign: 'justify',
+      },
+      colors: {
+        primary: '#2B2B2B', secondary: '#6B6B6B', text: '#3D3D3D',
+        muted: '#8A8A8A', divider: '#D2D2D2', background: '#FFFFFF',
+        sidebarText: '#FFFFFF', sidebarMuted: '#C9C9C9',
+        sidebarAccent: '#FFFFFF', sidebarDivider: '#5A5A5A',
+      },
+      spacing: { sectionGap: 15, itemGap: 7, blockPadding: 3, columnPadding: 26, columnPaddingTop: 30 },
+      header: {
+        style: 'centered', showPhoto: true, photoShape: 'circle', photoSize: 92,
+        photoRingWidth: 4, photoRingColor: '#FFFFFF',
+        placement: 'sidebar', showContactLine: false,
+      },
+      sectionTitle: { variant: 'plain', sidebarSizeScale: 0.8, iconBadge: true, iconBadgeColor: '#3A3A3A' },
+      divider: { style: 'none', thickness: 0, color: '#D2D2D2' },
+      sectionOrder: [],
+      sectionTitles: { summary: 'About Me', experience: 'Job Experience', contact: 'Contact Me', languages: 'Language' },
+      sectionIcons: {
+        summary: 'person', experience: 'briefcase', skills: 'skills', languages: 'language',
+        contact: 'phone', education: 'education', references: 'references', certificates: 'certificate',
+        maritime: 'ship',
+      },
+      columns: {
+        left: ['summary', 'experience', 'skills', 'languages'],
+        right: ['contact', 'education', 'references'],
+        leftRatio: 0.62,
+      },
+      sectionLayouts: {
+        experience: { display: 'timeline', dateFormat: 'YYYY' },
+        // The design shows segmented skill meters in two columns.
+        skills: { display: 'rating', barStyle: 'segmented', columns: 2 },
+        languages: { display: 'labelValue', rowLayout: 'inline', bulletStyle: 'circle' },
+        certificates: { display: 'list', showExpiry: true },
+      },
+      visibilityRules: { personal: { photo: true, summary: true }, maritime: false, references: true },
+    },
+  },
+  {
+    key: 'azure-banner',
+    name: 'Azure Banner',
+    description: 'Blue header band with photo and contact details, a full-width profile, then a two-column body.',
+    category: 'general',
+    sortOrder: 50,
+    layout: {
+      page: {
+        size: 'A4',
+        margins: { top: 0, right: 0, bottom: 28, left: 0 },
+        columns: 2,
+        sidebar: { enabled: false, widthRatio: 0.35, side: 'left', color: '#FFFFFF' },
+        banner: { enabled: true, heightRatio: 0.155, span: 'full', color: '#1668C4' },
+      },
+      typography: {
+        fontFamily: 'Roboto',
+        baseFontSize: 9.5,
+        headingScale: 1.35,
+        lineHeight: 1.35,
+        sectionTitleCase: 'upper',
+        nameScale: 2,
+        nameLetterSpacing: 0.4,
+        sectionTitleLetterSpacing: 0.8,
+        paragraphAlign: 'justify',
+      },
+      colors: {
+        primary: '#1668C4', secondary: '#1668C4', text: '#333333',
+        muted: '#6B7280', divider: '#1668C4', background: '#FFFFFF',
+        bannerText: '#FFFFFF', bannerMuted: '#D3E4F7', bannerAccent: '#FFFFFF',
+      },
+      spacing: { sectionGap: 13, itemGap: 6, blockPadding: 3, columnPadding: 30, columnPaddingTop: 16 },
+      header: {
+        style: 'left', showPhoto: true, photoShape: 'circle', photoSize: 78,
+        photoRingWidth: 3, photoRingColor: '#FFFFFF',
+        placement: 'banner', photoSide: 'right', contactInBanner: true,
+        showContactLine: false,
+      },
+      sectionTitle: { variant: 'underline', sidebarSizeScale: 0.9, iconBadge: false },
+      divider: { style: 'none', thickness: 0, color: '#1668C4' },
+      sectionOrder: [],
+      sectionTitles: { summary: 'Profile Summary', experience: 'Professional Experience', contact: 'Social' },
+      sectionIcons: {},
+      columns: {
+        left: ['contact', 'skills', 'education'],
+        right: ['summary', 'experience', 'certificates'],
+        leftRatio: 0.34,
+      },
+      sectionLayouts: {
+        experience: { display: 'timeline', dateFormat: 'MMM YYYY' },
+        skills: { display: 'list', bulletStyle: 'check' },
+        certificates: { display: 'list', showExpiry: true },
+        languages: { display: 'labelValue', rowLayout: 'inline' },
+      },
+      visibilityRules: { personal: { photo: true, summary: true }, maritime: true, references: false },
+    },
+  },
+  {
+    key: 'forest-banner',
+    name: 'Forest Banner',
+    description: 'Deep green header band with a circular photo and wide-set name, over a calm two-column body.',
+    category: 'executive',
+    sortOrder: 60,
+    layout: {
+      page: {
+        size: 'A4',
+        margins: { top: 0, right: 0, bottom: 28, left: 0 },
+        columns: 2,
+        // Light grey reading column on the left. A band does not have to be
+        // dark — the watermark reads its luminance and keeps dark tiles here.
+        sidebar: { enabled: true, widthRatio: 0.33, side: 'left', color: '#EFEFEF' },
+        banner: { enabled: true, heightRatio: 0.185, span: 'full', color: '#1F4B3F' },
+      },
+      typography: {
+        fontFamily: 'Roboto',
+        baseFontSize: 9,
+        headingScale: 1.35,
+        lineHeight: 1.4,
+        sectionTitleCase: 'upper',
+        nameScale: 2.1,
+        nameLetterSpacing: 2.2,
+        sectionTitleLetterSpacing: 1.6,
+        paragraphAlign: 'justify',
+      },
+      colors: {
+        primary: '#1F4B3F', secondary: '#3D6B5E', text: '#3A3A3A',
+        muted: '#7A7A7A', divider: '#B7B7B7', background: '#FFFFFF',
+        // The left band is light, so its palette stays dark-on-light.
+        sidebarText: '#3A3A3A', sidebarMuted: '#7A7A7A',
+        sidebarAccent: '#1F4B3F', sidebarDivider: '#C4C4C4',
+        bannerText: '#FFFFFF', bannerMuted: '#BFD6CE', bannerAccent: '#FFFFFF',
+      },
+      spacing: { sectionGap: 16, itemGap: 7, blockPadding: 3, columnPadding: 26, columnPaddingTop: 20 },
+      header: {
+        style: 'left', showPhoto: true, photoShape: 'circle', photoSize: 96,
+        photoRingWidth: 3, photoRingColor: '#FFFFFF',
+        placement: 'banner', photoSide: 'left', contactInBanner: false,
+        showContactLine: false,
+      },
+      sectionTitle: { variant: 'underline', sidebarSizeScale: 0.95, iconBadge: false },
+      divider: { style: 'none', thickness: 0, color: '#B7B7B7' },
+      sectionOrder: [],
+      sectionTitles: { summary: 'About', experience: 'Experience', skills: 'Skills', education: 'Education' },
+      sectionIcons: {},
+      columns: {
+        left: ['contact', 'skills', 'education', 'languages'],
+        right: ['summary', 'experience', 'certificates'],
+        leftRatio: 0.33,
+      },
+      sectionLayouts: {
+        experience: { display: 'timeline', dateFormat: 'YYYY' },
+        skills: { display: 'list', bulletStyle: 'dot' },
+        languages: { display: 'labelValue', rowLayout: 'stacked' },
+        certificates: { display: 'list', showExpiry: true },
+      },
+      visibilityRules: { personal: { photo: true, summary: true }, maritime: true, references: false },
+    },
+  },
 ];
 
 (async () => {

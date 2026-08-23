@@ -74,6 +74,30 @@ const resumeTemplateSchema = new mongoose.Schema(
           side: { type: String, enum: ['left', 'right'], default: 'left' },
           color: { type: String, default: '#2B303B' },
         },
+
+        // ── Header banner band ──────────────────────────────────────────────
+        // A coloured strip across the TOP of the page, painted as a page
+        // decoration for the same reason the sidebar is: it must sit behind
+        // the content and repeat on every page, which no flowing block can
+        // guarantee. This is what lets a template put white identity text over
+        // a solid colour — the pre-existing header.style 'banner' only ever
+        // drew a coloured RULE beneath a normal header, never a filled band.
+        //
+        // Disabled by default, so every existing template is untouched.
+        //
+        // Same nesting rule as `sidebar` above: MUST stay under `page`. The
+        // renderer, the builder and the mobile thumbnail all read
+        // `layout.page.banner`; declared a level up, Mongoose drops it on save
+        // and the band silently disappears everywhere at once.
+        banner: {
+          enabled: { type: Boolean, default: false },
+          // Fraction of page HEIGHT, 0-1.
+          heightRatio: { type: Number, default: 0.16, min: 0.05, max: 0.4 },
+          // 'full' spans the page. 'main' stops at the sidebar edge so a band
+          // and a sidebar sit beside each other rather than overpainting.
+          span: { type: String, enum: ['full', 'main'], default: 'full' },
+          color: { type: String, default: '#0D3E85' },
+        },
       },
 
       typography: {
@@ -112,6 +136,12 @@ const resumeTemplateSchema = new mongoose.Schema(
         sidebarMuted: { type: String, default: '#B9C0CC' },
         sidebarAccent: { type: String, default: '#4A90E2' },
         sidebarDivider: { type: String, default: '#4A5160' },
+        // Palette for anything painted inside the banner band. Ignored unless
+        // page.banner.enabled. Same principle as the sidebar palette: a block
+        // never carries its own colours, it inherits the region it lands in.
+        bannerText: { type: String, default: '#FFFFFF' },
+        bannerMuted: { type: String, default: '#D6DEEA' },
+        bannerAccent: { type: String, default: '#9FC1EA' },
       },
       spacing: {
         sectionGap: { type: Number, default: 16 },
@@ -135,7 +165,17 @@ const resumeTemplateSchema = new mongoose.Schema(
         // Where the name/photo/headline block lives. 'document' = across the
         // top of the page (every template before this one). 'sidebar' = at the
         // top of the sidebar column instead.
-        placement: { type: String, enum: { values: ['document', 'sidebar'], message: 'Invalid header placement.' }, default: 'document' },
+        // 'document' = across the top of the page in normal flow (every
+        // template before the banner designs). 'sidebar' = at the top of the
+        // sidebar column. 'banner' = inside the coloured banner band, spanning
+        // the full width ABOVE any columns.
+        placement: { type: String, enum: { values: ['document', 'sidebar', 'banner'], message: 'Invalid header placement.' }, default: 'document' },
+        // Banner placement only: photo on the left with the name beside it, or
+        // name on the left with the photo beside it. Both designs exist.
+        photoSide: { type: String, enum: { values: ['left', 'right'], message: 'Invalid photo side.' }, default: 'left' },
+        // Render the contact details as icon rows inside the banner instead of
+        // the single "email • phone • city" line.
+        contactInBanner: { type: Boolean, default: false },
         // The one-line "email • phone • city" strip under the name. Templates
         // that give Contact its own section turn this off to avoid printing
         // the same details twice.
@@ -146,6 +186,10 @@ const resumeTemplateSchema = new mongoose.Schema(
         // Scale relative to headingScale, so a template can have big page
         // headings and small sidebar headings without a second font size.
         sidebarSizeScale: { type: Number, default: 0.85 },
+        // Draw the section glyph inside a filled circle, the way the
+        // badge-headed designs do, rather than as a bare inline icon.
+        iconBadge: { type: Boolean, default: false },
+        iconBadgeColor: { type: String, default: '#2B303B' },
       },
       divider: {
         style: { type: String, enum: { values: DIVIDER_STYLES, message: 'Invalid divider style.' }, default: 'line' },
@@ -158,6 +202,12 @@ const resumeTemplateSchema = new mongoose.Schema(
       // "Profile" vs "About Me" vs "Career Objective" is a design decision,
       // so it lives in the template rather than in the builder.
       sectionTitles: { type: mongoose.Schema.Types.Mixed, default: {} },
+      // Optional per-section heading glyph, e.g. { experience: 'briefcase' }.
+      // Values are NAMES from the renderer's icon set, never markup or a path,
+      // so each renderer decides how to draw them (SVG in PDF, a character in
+      // HTML, dropped in ATS plain text). An unknown name degrades to a plain
+      // text heading rather than failing the render.
+      sectionIcons: { type: mongoose.Schema.Types.Mixed, default: {} },
       // Two-column layouts only: which sections go in which column, and in
       // what order. When `left` is non-empty the builder switches to the
       // two-column path and `sectionOrder` is ignored. Same section keys.

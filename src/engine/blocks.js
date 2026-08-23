@@ -32,6 +32,13 @@ const BLOCK_TYPES = Object.freeze({
   // halves are styled and aligned independently, and from Table because it
   // carries no header row or borders.
   LABEL_VALUE_LIST: 'LabelValueList',
+  // A labelled proficiency bar — "Navigation" with a track filled to some
+  // fraction. Distinct from LabelValueList because the value is a MAGNITUDE
+  // rendered as geometry, not a word: an HTML renderer would draw a real
+  // meter, and an ATS-plain-text renderer would fall back to the level name.
+  // The block carries a 0-1 `level` plus the original label, never a colour or
+  // a pixel width, so every renderer decides its own presentation.
+  RATING_LIST: 'RatingList',
 });
 
 // Palette regions. A block tree is painted against ONE palette at a time;
@@ -41,6 +48,10 @@ const BLOCK_TYPES = Object.freeze({
 const REGIONS = Object.freeze({
   MAIN: 'main',
   SIDEBAR: 'sidebar',
+  // Inside the coloured header band. Exists for the same reason SIDEBAR does:
+  // a block painted here needs light-on-colour treatment, and expressing that
+  // as a region keeps every block colour-free.
+  BANNER: 'banner',
 });
 
 /** @returns {{type: string, props: object, children: object[]}} */

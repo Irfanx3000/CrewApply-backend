@@ -53,6 +53,19 @@ function buildHeader(content, layout) {
     photoRingWidth: layout.header?.photoRingWidth || 0,
     photoRingColor: layout.header?.photoRingColor || null,
     nameLetterSpacing: layout.typography?.nameLetterSpacing || 0,
+    // Banner placement only — ignored by the other two placements.
+    placement: layout.header?.placement || 'document',
+    photoSide: layout.header?.photoSide || 'left',
+    // Contact rendered as icon rows INSIDE the band, instead of (or as well
+    // as) the single strip line. The banner designs put phone/email/location
+    // in the coloured area beside the name.
+    bannerContact: layout.header?.contactInBanner
+      ? [
+        contact?.currentLocation || contact?.city ? { icon: 'location', text: contact.currentLocation || contact.city } : null,
+        contact?.phone ? { icon: 'phone', text: contact.phone } : null,
+        contact?.email ? { icon: 'email', text: contact.email } : null,
+      ].filter(Boolean)
+      : null,
   });
 }
 
@@ -203,9 +216,33 @@ function buildCertificatesSection(content, sectionLayouts) {
   return block(T.SECTION, { title: 'Certificates' }, [block(T.BULLET_LIST, { items: entries.map((c) => c.name) })]);
 }
 
+// Proficiency words -> a 0-1 magnitude, so a bar can be drawn from the data
+// that already exists. These are the CareerProfile enums verbatim (see
+// SKILL_LEVELS / LANGUAGE_PROFICIENCIES); nothing new is stored on the profile
+// and no migration is needed. An unrecognised or absent value falls back to a
+// mid reading rather than an empty bar, because a blank track next to a skill
+// the user deliberately listed reads as "none", which is worse than a guess.
+const RATING_SCALE = Object.freeze({
+  beginner: 0.4, intermediate: 0.7, expert: 1,
+  basic: 0.3, conversational: 0.6, fluent: 0.85, native: 1,
+});
+const ratingOf = (word) => RATING_SCALE[String(word || '').trim().toLowerCase()] ?? 0.6;
+
 function buildSkillsSection(content, sectionLayouts) {
   const entries = content.skills || [];
   if (!entries.length) return null;
+
+  if (sectionLayouts?.skills?.display === 'rating') {
+    return block(T.SECTION, { title: 'Skills' }, [
+      block(T.RATING_LIST, {
+        items: entries.map((s) => ({ label: s.name, level: ratingOf(s.level), levelLabel: s.level || null })),
+        columns: sectionLayouts.skills.columns,
+        // 'segmented' draws discrete notches (template 1); 'bar' is continuous.
+        barStyle: sectionLayouts.skills.barStyle || 'bar',
+      }),
+    ]);
+  }
+
   return block(T.SECTION, { title: 'Skills' }, [
     block(T.BULLET_LIST, {
       items: entries.map((s) => (s.level ? `${s.name} (${s.level})` : s.name)),
@@ -220,6 +257,15 @@ function buildLanguagesSection(content, sectionLayouts) {
   if (!entries.length) return null;
   // Two treatments: the original "English — Fluent" bullet, or a label/value
   // row where the proficiency sits in its own aligned column.
+  if (sectionLayouts?.languages?.display === 'rating') {
+    return block(T.SECTION, { title: 'Languages' }, [
+      block(T.RATING_LIST, {
+        items: entries.map((l) => ({ label: l.name, level: ratingOf(l.proficiency), levelLabel: l.proficiency || null })),
+        columns: sectionLayouts.languages.columns,
+        barStyle: sectionLayouts.languages.barStyle || 'bar',
+      }),
+    ]);
+  }
   if (sectionLayouts?.languages?.display === 'labelValue') {
     return block(T.SECTION, { title: 'Languages' }, [
       block(T.LABEL_VALUE_LIST, {
@@ -273,7 +319,14 @@ function buildSections(keys, content, layout) {
     if (!builder) continue;
     if (visible(layout.visibilityRules, key, true) === false) continue;
     const sectionBlock = builder(content, layout);
-    if (sectionBlock) out.push(sectionBlock);
+    if (sectionBlock) {
+      // Optional heading glyph, by NAME. Attached here rather than inside each
+      // section builder so every section gains it uniformly and no builder has
+      // to know the template's icon choices.
+      const icon = layout.sectionIcons?.[key];
+      if (icon) sectionBlock.props.icon = icon;
+      out.push(sectionBlock);
+    }
   }
   return out;
 }
@@ -289,7 +342,10 @@ function buildSingleColumn(content, layout) {
   const blocks = [];
 
   const header = buildHeader(content, layout);
-  if (header) blocks.push(header);
+  if (header) {
+    if ((layout.header?.placement || 'document') === 'banner') header.props.region = REGIONS.BANNER;
+    blocks.push(header);
+  }
 
   const objective = buildObjective(content, layout);
   if (objective) blocks.push(objective);
@@ -317,17 +373,23 @@ function buildTwoColumn(content, layout) {
   const sidebarOn = !!layout.page?.sidebar?.enabled;
   const leftRegion = sidebarOn ? REGIONS.SIDEBAR : REGIONS.MAIN;
 
+  const placement = layout.header?.placement || 'document';
+  // 'banner' lifts the identity block OUT of both columns so it can span the
+  // full page width inside the coloured band. The two other placements keep
+  // the header inside a column, exactly as before.
+  const bannerHeader = placement === 'banner' ? buildHeader(content, layout) : null;
+
   const left = [];
   // In sidebar placement the identity block (photo, name, headline) opens the
   // sidebar instead of spanning the page.
-  if (layout.header?.placement === 'sidebar') {
+  if (placement === 'sidebar') {
     const header = buildHeader(content, layout);
     if (header) left.push(header);
   }
   left.push(...buildSections(layout.columns.left, content, layout));
 
   const right = [];
-  if (layout.header?.placement !== 'sidebar') {
+  if (placement === 'document') {
     const header = buildHeader(content, layout);
     if (header) right.push(header);
   }
@@ -336,7 +398,16 @@ function buildTwoColumn(content, layout) {
 
   const leftRatio = layout.columns.leftRatio || 0.35;
 
-  return [
+  const out = [];
+  if (bannerHeader) {
+    // Painted in the BANNER region so it inherits the band palette (white on
+    // colour) without carrying any colour of its own — the same region
+    // mechanism the dark sidebar uses.
+    bannerHeader.props.region = REGIONS.BANNER;
+    out.push(bannerHeader);
+  }
+
+  out.push(
     block(
       T.COLUMNS,
       {
@@ -346,8 +417,10 @@ function buildTwoColumn(content, layout) {
         paddingTop: layout.spacing?.columnPaddingTop ?? layout.spacing?.columnPadding ?? 24,
       },
       [left, right]
-    ),
-  ];
+    )
+  );
+
+  return out;
 }
 
 // content: resolved, self-contained data from resumeComposer.resolveContent()

@@ -141,3 +141,32 @@ test('a banner spanning MAIN only stops at the sidebar edge', () => {
   assert.ok(banner.x > 0, 'banner must start after a left sidebar');
   assert.ok(Math.abs(banner.x + banner.w - A4.width) < 1, 'and run to the right page edge');
 });
+
+// ── The real catalogue ──────────────────────────────────────────────────────
+// The synthetic cases above prove the model is correct. This proves the
+// SHIPPED templates are safe, which is the claim that actually matters: a
+// template whose watermark is invisible is the paid output given away free.
+// It reads the live collection, so a template added later by an admin through
+// the panel — not just the seed script — is covered too.
+test('every active template keeps its watermark visible', async () => {
+  require('dotenv').config({ quiet: true });
+  const mongoose = require('mongoose');
+  if (!process.env.MONGODB_URI) return;
+
+  await mongoose.connect(process.env.MONGODB_URI);
+  try {
+    const ResumeTemplate = require('../src/models/resumeTemplate.model');
+    const templates = await ResumeTemplate.find({ isActive: true }).lean();
+    assert.ok(templates.length > 0, 'sanity: the catalogue is not empty');
+
+    for (const t of templates) {
+      const page = t.layout?.page || {};
+      const bands = __test.pageBands(A4, page);
+      const ground = t.layout?.colors?.background || '#FFFFFF';
+      const svg = __test.watermarkTilesSvg(WM, A4, bands, ground);
+      assertEveryTileContrasts(svg, bands, ground, `template "${t.key}"`);
+    }
+  } finally {
+    await mongoose.connection.close();
+  }
+});

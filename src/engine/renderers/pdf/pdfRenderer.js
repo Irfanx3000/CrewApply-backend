@@ -38,6 +38,16 @@ function resolveImagePath(relativePath) {
 // That single indirection is the whole mechanism behind a dark sidebar sitting
 // next to a white main column in one flowing document.
 function resolvePalette(colors, region) {
+  if (region === REGIONS.BANNER) {
+    return {
+      heading: colors.bannerText || '#FFFFFF',
+      name: colors.bannerText || '#FFFFFF',
+      accent: colors.bannerAccent || '#9FC1EA',
+      text: colors.bannerText || '#FFFFFF',
+      muted: colors.bannerMuted || '#D6DEEA',
+      divider: colors.bannerAccent || '#9FC1EA',
+    };
+  }
   if (region === REGIONS.SIDEBAR) {
     return {
       heading: colors.sidebarText || '#FFFFFF',
@@ -96,7 +106,51 @@ function paintHeader(b, ctx) {
   }
   if (b.props.contactLine) nodes.push({ text: b.props.contactLine, style: 'muted', color: palette.muted, margin: [0, 4, 0, 0] });
 
-  // 'banner' keeps the centered header but adds a bold colored rule beneath
+  // Banner placement: photo and identity sit side by side INSIDE the coloured
+  // band, with contact rows optionally in the opposite corner. Returned before
+  // the style branches below because the band replaces them entirely — there
+  // is no rule to draw when the colour itself is the treatment.
+  if (b.props.placement === 'banner') {
+    const size = b.props.photoSize || 74;
+    const identity = { width: '*', stack: [nameNode], margin: [0, 0, 0, 0] };
+    if (b.props.headline) {
+      identity.stack.push({ text: b.props.headline, style: 'headline', color: palette.muted, margin: [0, 2, 0, 0] });
+    }
+
+    const cols = [];
+    const photoNode = photoPath
+      ? { width: size, stack: [{ image: photoPath, width: size, height: size }] }
+      : null;
+
+    if (photoNode && b.props.photoSide !== 'right') cols.push(photoNode);
+    cols.push(identity);
+    if (photoNode && b.props.photoSide === 'right') cols.push(photoNode);
+
+    // Contact rows live in the band opposite the photo. Falls back to nothing
+    // when contactInBanner is off, in which case the usual strip line applies.
+    if (b.props.bannerContact?.length) {
+      cols.push({
+        width: 'auto',
+        stack: b.props.bannerContact.map((row) => {
+          const glyph = iconNode(row.icon, palette.muted, 8);
+          const text = { width: '*', text: row.text, color: palette.text, fontSize: 8 };
+          return glyph
+            ? { columns: [{ width: 13, stack: [glyph], margin: [0, 1, 0, 0] }, text], columnGap: 0, margin: [0, 0, 0, 3] }
+            : { ...text, width: undefined, margin: [0, 0, 0, 3] };
+        }),
+        margin: [12, 2, 0, 0],
+      });
+    }
+
+    return {
+      columns: cols,
+      columnGap: 14,
+      margin: [0, 0, 0, bottomMargin],
+    };
+  }
+
+  // 'banner' STYLE (distinct from banner PLACEMENT above) keeps the centered
+  // header but adds a bold colored rule beneath
   // it — a distinct treatment without the complexity of a true text-over-
   // fill overlay, which pdfmake doesn't support cleanly for this vocabulary.
   if (style === 'banner') {
@@ -237,6 +291,78 @@ function paintLabelValueList(b, ctx) {
     })),
     margin: [0, 2, 0, bottom],
   };
+}
+
+/**
+ * A labelled proficiency bar. The block gives a 0-1 magnitude and a label; how
+ * that becomes geometry is entirely the renderer's business.
+ *
+ * Two treatments: a continuous track, and a segmented one (discrete notches)
+ * which is what the badge-headed design uses. Both draw the empty track first
+ * and the fill over it, so an unfilled portion still reads as part of a meter
+ * rather than as blank space.
+ *
+ * Colours come from the region palette, so the same block renders correctly
+ * over a dark sidebar and over white without carrying any colour itself.
+ */
+function paintRatingList(b, ctx) {
+  const { palette, spacing, typography } = ctx;
+  const items = b.props.items || [];
+  if (!items.length) return null;
+
+  const cols = Math.max(1, Math.min(b.props.columns || 1, 2));
+  const gap = 12;
+  const trackWidth = Math.max((ctx.width - (cols - 1) * gap) / cols, 40);
+  const fontSize = (typography.baseFontSize || 10) * 0.82;
+  const barH = 3.5;
+  const segmented = b.props.barStyle === 'segmented';
+
+  const rowFor = (item) => {
+    const level = Math.max(0, Math.min(Number(item.level) || 0, 1));
+    // Label above the track, not beside it — at sidebar widths a side-by-side
+    // label leaves the bar too short to read as a magnitude at all.
+    const canvas = [];
+
+    if (segmented) {
+      const segs = 5;
+      const segGap = 1.5;
+      const segW = (trackWidth - (segs - 1) * segGap) / segs;
+      const filled = Math.round(level * segs);
+      for (let i = 0; i < segs; i += 1) {
+        canvas.push({
+          type: 'rect', x: i * (segW + segGap), y: 0, w: segW, h: barH,
+          color: i < filled ? palette.accent : palette.divider,
+        });
+      }
+    } else {
+      canvas.push({ type: 'rect', x: 0, y: 0, w: trackWidth, h: barH, color: palette.divider });
+      if (level > 0) {
+        canvas.push({ type: 'rect', x: 0, y: 0, w: trackWidth * level, h: barH, color: palette.accent });
+      }
+    }
+
+    return {
+      width: trackWidth,
+      stack: [
+        { text: item.label || '', fontSize, color: palette.text, margin: [0, 0, 0, 2] },
+        { canvas, margin: [0, 0, 0, 0] },
+      ],
+      margin: [0, 0, 0, spacing.itemGap ?? 6],
+    };
+  };
+
+  if (cols === 1) {
+    return { stack: items.map(rowFor), margin: [0, 0, 0, spacing.blockPadding ?? 4] };
+  }
+
+  // Row-major fill so reading order matches the list order.
+  const rows = [];
+  for (let i = 0; i < items.length; i += cols) {
+    const slice = items.slice(i, i + cols).map(rowFor);
+    while (slice.length < cols) slice.push({ width: trackWidth, text: '' });
+    rows.push({ columns: slice, columnGap: gap });
+  }
+  return { stack: rows, margin: [0, 0, 0, spacing.blockPadding ?? 4] };
 }
 
 function paintTimelineItem(b, ctx) {
@@ -389,7 +515,40 @@ function paintSection(b, ctx) {
   };
   if (typography.sectionTitleLetterSpacing) titleNode.characterSpacing = typography.sectionTitleLetterSpacing;
 
-  const head = [titleNode];
+  // Optional heading glyph. Drawn either bare or inside a filled circle
+  // (the badge-headed designs), and degrading to a plain title when the icon
+  // name is unknown — a missing glyph must never cost the section.
+  let head0 = titleNode;
+  const iconName = b.props.icon;
+  if (iconName) {
+    const glyphSize = titleNode.fontSize * 0.62;
+    const badge = sectionTitle.iconBadge;
+    const glyph = iconNode(iconName, badge ? '#FFFFFF' : palette.heading, glyphSize);
+    if (glyph) {
+      const boxSize = badge ? titleNode.fontSize * 1.25 : glyphSize;
+      const iconCell = badge
+        ? {
+          width: boxSize,
+          stack: [{
+            // The circle is a canvas ellipse with the glyph laid over it via a
+            // negative top margin — pdfmake has no z-stacking primitive.
+            stack: [
+              { canvas: [{ type: 'ellipse', x: boxSize / 2, y: boxSize / 2, r1: boxSize / 2, r2: boxSize / 2, color: sectionTitle.iconBadgeColor || palette.heading }] },
+              { stack: [glyph], margin: [(boxSize - glyphSize) / 2, -(boxSize / 2 + glyphSize / 2), 0, 0] },
+            ],
+          }],
+        }
+        : { width: boxSize, stack: [glyph], margin: [0, titleNode.fontSize * 0.18, 0, 0] };
+
+      head0 = {
+        columns: [iconCell, { width: '*', ...titleNode, margin: [0, badge ? titleNode.fontSize * 0.18 : 0, 0, 0] }],
+        columnGap: 6,
+        margin: titleNode.margin,
+      };
+    }
+  }
+
+  const head = [head0];
   if (sectionTitle.variant === 'underline') {
     head.push({
       canvas: [{ type: 'line', x1: 0, y1: 0, x2: ctx.width, y2: 0, lineWidth: 1, lineColor: palette.divider }],
@@ -418,6 +577,7 @@ const PAINTERS = {
   [T.SECTION]: paintSection,
   [T.ICON_TEXT]: paintIconText,
   [T.LABEL_VALUE_LIST]: paintLabelValueList,
+  [T.RATING_LIST]: paintRatingList,
 };
 
 function paintBlock(b, ctx) {
