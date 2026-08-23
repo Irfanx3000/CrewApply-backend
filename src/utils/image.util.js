@@ -44,4 +44,46 @@ const convertToWebp = async (inputPath, outputPath, { resize, quality = 85 }) =>
   await pipeline.webp({ quality }).toFile(outputPath);
 };
 
-module.exports = { convertToWebp, MAX_INPUT_PIXELS };
+/**
+ * Crops an image to a SQUARE and encodes it as WebP, keeping the subject.
+ *
+ * Written as its own function rather than another convertToWebp() call because
+ * getting a square out of `cover` is not a matter of passing equal dimensions:
+ *
+ *   - `withoutEnlargement` with `fit: 'cover'` silently abandons the target
+ *     when the source is smaller in either axis, so a 900x1200 upload came back
+ *     900x1000 — not square at all. Every consumer (the app's circular frames,
+ *     every PDF template) then re-crops it differently, which is precisely the
+ *     inconsistency a single square master exists to prevent.
+ *   - Dropping `withoutEnlargement` fixes the shape but upscales small uploads
+ *     into fake resolution, which looks soft for no benefit.
+ *
+ * So the target is derived from the source instead: the largest square the
+ * image can actually supply, capped at maxSize. Always square, never upscaled.
+ *
+ * `position: 'attention'` picks the region of highest visual interest — the
+ * face, on a portrait — rather than assuming the subject is dead centre. Phone
+ * portraits put the face in the upper third, so a centre crop reliably beheads
+ * them.
+ *
+ * @param {string} inputPath
+ * @param {string} outputPath
+ * @param {object} opts
+ * @param {number} [opts.maxSize=1000] upper bound on the output edge
+ * @param {number} [opts.quality=90]
+ * @returns {Promise<number>} the edge length actually produced
+ */
+const convertToSquareWebp = async (inputPath, outputPath, { maxSize = 1000, quality = 90 } = {}) => {
+  const meta = await sharp(inputPath, { limitInputPixels: MAX_INPUT_PIXELS }).metadata();
+  const shortest = Math.min(meta.width || maxSize, meta.height || maxSize);
+  const edge = Math.max(Math.min(shortest, maxSize), 1);
+
+  await sharp(inputPath, { limitInputPixels: MAX_INPUT_PIXELS })
+    .resize(edge, edge, { fit: 'cover', position: 'attention' })
+    .webp({ quality })
+    .toFile(outputPath);
+
+  return edge;
+};
+
+module.exports = { convertToWebp, convertToSquareWebp, MAX_INPUT_PIXELS };

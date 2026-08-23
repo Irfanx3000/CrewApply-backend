@@ -8,7 +8,7 @@ const User = require('../models/user.model');
 const ResumeConfiguration = require('../models/resumeConfiguration.model');
 const Application = require('../models/application.model');
 const { saveFile } = require('./storage.service');
-const { convertToWebp } = require('../utils/image.util');
+const { convertToWebp, convertToSquareWebp } = require('../utils/image.util');
 const { assertRealFileType, deleteTempFile } = require('../utils/uploadGuard.util');
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
@@ -115,7 +115,28 @@ const uploadProfilePhoto = async (userId, file) => {
   const outputFilename = `${path.parse(file.filename).name}.webp`;
   const outputPath = path.join(path.dirname(file.path), '..', 'profile', outputFilename);
 
-  await convertToWebp(file.path, outputPath, { resize: [400, 400, { fit: 'cover', position: 'centre' }] });
+  // ── Why 1000px, and why 'attention' rather than 'centre' ──────────────────
+  //
+  // CROP: a centre crop assumes the subject is in the middle of the frame. On a
+  // portrait photo taken on a phone the face sits in the upper third, so the
+  // centre square reliably cut the top of the head off — the "my photo is
+  // cropped" report. sharp's 'attention' strategy picks the region with the
+  // highest visual interest instead, which on a portrait is the face. Same
+  // strategy the PDF's circular mask already uses, so the two now agree on
+  // which part of the photo matters.
+  //
+  // BLUR: the master was stored at 400x400 while the PDF renderer asks for 3x
+  // the placed size for print crispness — 504px for a 168pt photo. It was
+  // upscaling a 400px source every time, which is exactly what soft, blurry
+  // output looks like. 1000px covers the largest placed photo with headroom and
+  // still lands around 100KB as WebP.
+  //
+  // Kept SQUARE deliberately. The circular frames in the app (top bar, sidebar,
+  // profile card) and in every PDF template all render the avatar with a cover
+  // fit, and only a square master guarantees none of them distorts or re-crops
+  // it differently. withoutEnlargement stops a small upload being blown up into
+  // fake resolution.
+  await convertToSquareWebp(file.path, outputPath, { maxSize: 1000, quality: 90 });
   deleteTempFile(file.path);
 
   const relativePath = `uploads/profile/${outputFilename}`;
