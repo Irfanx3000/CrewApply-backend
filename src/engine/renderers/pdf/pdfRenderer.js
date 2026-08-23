@@ -128,15 +128,28 @@ function paintHeader(b, ctx) {
     // template (a fraction of the page), while the header content is however
     // tall it is — so without this the content sits at the top and leaves a
     // slab of empty colour beneath it.
+    // How far the photo hangs below the band. Declared before the geometry
+    // below, which derives the top padding from it.
+    const overflow = photoPath ? size * Math.min(Math.max(b.props.photoOverflow || 0, 0), 0.5) : 0;
     const bandHeight = ctx.bannerHeight || 0;
     const contentHeight = Math.max(size, (typographyNameSize(ctx) * 2.4));
     // Centred vertically while the photo sits inside the band. Once it breaks
     // out, the composition anchors to the band's TOP instead — centring a
     // deliberately-overhanging photo only pushes the header down and hides the
     // overlap that was the whole point.
-    const willOverflow = !!photoPath && (b.props.photoOverflow || 0) > 0;
+    // When the photo breaks out, the top padding is DERIVED from the overflow
+    // rather than picked independently. Otherwise the two disagree: the ratio
+    // reserves one amount of space below the band while the photo's actual
+    // position produces another, and the visible overhang ends up being
+    // whatever falls out of the arithmetic instead of what was asked for.
+    //
+    // Solving for the photo's bottom edge landing exactly `overflow` past the
+    // band gives:  top = bandHeight + overflow - size
+    // Clamped so a photo taller than the band plus its overhang still starts
+    // inside the band rather than above the page.
+    const willOverflow = !!photoPath && overflow > 0;
     const topPad = willOverflow
-      ? Math.max(bandHeight * 0.16, 10)
+      ? Math.max(bandHeight + overflow - size, 8)
       : (bandHeight > contentHeight ? Math.max((bandHeight - contentHeight) / 2, 8) : 12);
     const nameSize = typographyNameSize(ctx);
 
@@ -200,7 +213,6 @@ function paintHeader(b, ctx) {
     // really is, so the circle paints past the band's lower edge; the block's
     // own bottom margin then restores that space so the first section below
     // clears the overhang instead of colliding with it.
-    const overflow = photoPath ? size * Math.min(Math.max(b.props.photoOverflow || 0, 0), 0.5) : 0;
 
     const cols = [];
     const photoNode = photoPath

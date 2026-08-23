@@ -213,11 +213,15 @@ const TEMPLATES = [
       // second panel's worth down the page.
       spacing: { sectionGap: 15, itemGap: 7, blockPadding: 3, columnPadding: 26, columnPaddingTop: 18 },
       header: {
-        style: 'centered', showPhoto: true, photoShape: 'circle', photoSize: 104,
-        photoRingWidth: 4, photoRingColor: '#FFFFFF',
+        style: 'centered', showPhoto: true, photoShape: 'circle', photoSize: 158,
+        photoRingWidth: 5, photoRingColor: '#FFFFFF',
         // Identity lives in the grey panel, hard right, with the photo beside
         // it over the charcoal column — the arrangement in the source design.
-        placement: 'banner', photoSide: 'right', bannerAlign: 'right',
+        // Name hard LEFT, photo breaking out of the panel on the right — the
+        // band was lopsided with both pinned to the same edge, leaving half of
+        // it empty.
+        placement: 'banner', photoSide: 'right', bannerAlign: 'left',
+        photoOverflow: 0.3,
         nameLayout: 'single', showContactLine: false,
       },
       sectionTitle: { variant: 'plain', sidebarSizeScale: 0.8, iconBadge: true, iconBadgeColor: '#3A3A3A' },
@@ -279,10 +283,11 @@ const TEMPLATES = [
         style: 'left', showPhoto: true, photoShape: 'circle',
         // Large and centred, as in the source design: the photo is the focal
         // point of the band, not an accessory beside the name.
-        photoSize: 128, photoRingWidth: 4, photoRingColor: '#FFFFFF',
-        // A third of the circle hangs below the blue block, as in the source —
-        // the overlap is what gives the header depth.
-        photoOverflow: 0.34,
+        // Sized to span the band: with photoOverflow the top edge is derived so
+        // the circle starts just inside the blue and finishes well below it,
+        // rather than floating in the middle of the stripe.
+        photoSize: 168, photoRingWidth: 4, photoRingColor: '#FFFFFF',
+        photoOverflow: 0.26,
         placement: 'banner', photoSide: 'center', contactInBanner: true,
         // Given name light on line one, FAMILY NAME heavy on line two, with
         // the role in a filled block beneath.
