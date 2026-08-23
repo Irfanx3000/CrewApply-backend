@@ -58,6 +58,7 @@ function buildHeader(content, layout) {
     photoSide: layout.header?.photoSide || 'left',
     nameLayout: layout.header?.nameLayout || 'single',
     bannerAlign: layout.header?.bannerAlign || 'left',
+    photoOverflow: layout.header?.photoOverflow || 0,
     headlineBadge: !!layout.header?.headlineBadge,
     headlineBadgeColor: layout.header?.headlineBadgeColor || null,
     // Split once here rather than in the painter: which part is the family

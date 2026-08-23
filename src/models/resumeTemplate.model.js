@@ -191,6 +191,15 @@ const resumeTemplateSchema = new mongoose.Schema(
         // different composition from one that leads with the name, and neither
         // is expressible by column order alone.
         bannerAlign: { type: String, enum: { values: ['left', 'right'], message: 'Invalid banner alignment.' }, default: 'left' },
+        // How much of the photo hangs BELOW the banner band, as a fraction of
+        // its own height. The source designs deliberately break the photo out
+        // of the coloured block — that overlap is what gives the header depth
+        // and stops the band reading as a flat stripe.
+        //
+        // 0 keeps the photo fully inside the band (the previous behaviour, and
+        // still the default). Capped at 0.5: past halfway the circle stops
+        // reading as attached to the band at all.
+        photoOverflow: { type: Number, default: 0, min: 0, max: 0.5 },
         // Render the contact details as icon rows inside the banner instead of
         // the single "email • phone • city" line.
         contactInBanner: { type: Boolean, default: false },

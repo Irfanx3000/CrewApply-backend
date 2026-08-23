@@ -130,9 +130,14 @@ function paintHeader(b, ctx) {
     // slab of empty colour beneath it.
     const bandHeight = ctx.bannerHeight || 0;
     const contentHeight = Math.max(size, (typographyNameSize(ctx) * 2.4));
-    const topPad = bandHeight > contentHeight
-      ? Math.max((bandHeight - contentHeight) / 2, 8)
-      : 12;
+    // Centred vertically while the photo sits inside the band. Once it breaks
+    // out, the composition anchors to the band's TOP instead — centring a
+    // deliberately-overhanging photo only pushes the header down and hides the
+    // overlap that was the whole point.
+    const willOverflow = !!photoPath && (b.props.photoOverflow || 0) > 0;
+    const topPad = willOverflow
+      ? Math.max(bandHeight * 0.16, 10)
+      : (bandHeight > contentHeight ? Math.max((bandHeight - contentHeight) / 2, 8) : 12);
     const nameSize = typographyNameSize(ctx);
 
     // Stacked name: given name light, FAMILY NAME heavy and uppercased on its
@@ -186,9 +191,24 @@ function paintHeader(b, ctx) {
     // photo off to one side, which is what "centred" visibly was not.
     const identity = { width: centred ? '*' : '*', stack: identityStack };
 
+    // Deliberate break-out: the photo is allowed to hang below the band.
+    //
+    // Implemented as a NEGATIVE bottom margin rather than by growing the band,
+    // because the band is page decoration at absolute coordinates while the
+    // header is in the content flow — the two cannot both own the same height.
+    // The negative margin makes the row report itself shorter than the photo
+    // really is, so the circle paints past the band's lower edge; the block's
+    // own bottom margin then restores that space so the first section below
+    // clears the overhang instead of colliding with it.
+    const overflow = photoPath ? size * Math.min(Math.max(b.props.photoOverflow || 0, 0), 0.5) : 0;
+
     const cols = [];
     const photoNode = photoPath
-      ? { width: size, stack: [{ image: photoPath, width: size, height: size }] }
+      ? {
+        width: size,
+        stack: [{ image: photoPath, width: size, height: size }],
+        margin: overflow > 0 ? [0, 0, 0, -overflow] : undefined,
+      }
       : null;
 
     if (alignRight) cols.push({ width: '*', text: '' });
@@ -226,7 +246,9 @@ function paintHeader(b, ctx) {
       columnGap: 14,
       // Bottom margin carries the header clear of the band's lower edge so the
       // first section does not start on colour.
-      margin: [pad, topPad, pad, Math.max(bandHeight - contentHeight - topPad, 0) + bottomMargin],
+      // Bottom margin restores whatever the overflow pulled up, so content
+      // below clears the overhanging photo rather than running into it.
+      margin: [pad, topPad, pad, Math.max(bandHeight - contentHeight - topPad, 0) + overflow + bottomMargin],
     };
   }
 

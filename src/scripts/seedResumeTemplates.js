@@ -256,7 +256,7 @@ const TEMPLATES = [
         margins: { top: 0, right: 0, bottom: 28, left: 0 },
         columns: 2,
         sidebar: { enabled: false, widthRatio: 0.35, side: 'left', color: '#FFFFFF' },
-        banner: { enabled: true, heightRatio: 0.205, span: 'full', color: '#1668C4' },
+        banner: { enabled: true, heightRatio: 0.165, span: 'full', color: '#1668C4' },
       },
       typography: {
         fontFamily: 'Roboto',
@@ -279,7 +279,10 @@ const TEMPLATES = [
         style: 'left', showPhoto: true, photoShape: 'circle',
         // Large and centred, as in the source design: the photo is the focal
         // point of the band, not an accessory beside the name.
-        photoSize: 122, photoRingWidth: 4, photoRingColor: '#FFFFFF',
+        photoSize: 128, photoRingWidth: 4, photoRingColor: '#FFFFFF',
+        // A third of the circle hangs below the blue block, as in the source —
+        // the overlap is what gives the header depth.
+        photoOverflow: 0.34,
         placement: 'banner', photoSide: 'center', contactInBanner: true,
         // Given name light on line one, FAMILY NAME heavy on line two, with
         // the role in a filled block beneath.
