@@ -122,3 +122,63 @@ test('the subject survives the crop on a portrait', async () => {
   const centreFace = await facePixelRatio(centre);
   assert.ok(centreFace >= 0, `centre retained ${(centreFace * 100).toFixed(1)}%`);
 });
+
+// ── User-chosen crop ────────────────────────────────────────────────────────
+// The app's adjuster sends a normalised rectangle. These pin that it is
+// honoured exactly, and — more importantly — that a hostile or broken one
+// cannot make sharp throw and take the upload down with it, since the rectangle
+// is user input arriving over the wire.
+
+test('an explicit crop is honoured over the automatic one', async () => {
+  // Left half plain, right half a distinct colour. Cropping the RIGHT half must
+  // produce an image that is overwhelmingly that colour.
+  const src = path.join(tmp, 'halves.jpg');
+  await sharp({ create: { width: 1000, height: 1000, channels: 3, background: { r: 20, g: 20, b: 20 } } })
+    .composite([{
+      input: await sharp({ create: { width: 500, height: 1000, channels: 3, background: { r: 220, g: 30, b: 30 } } }).png().toBuffer(),
+      left: 500, top: 0,
+    }])
+    .jpeg({ quality: 95 })
+    .toFile(src);
+
+  const out = path.join(tmp, 'right-half.webp');
+  await convertToSquareWebp(src, out, { maxSize: 400, crop: { x: 0.5, y: 0.25, width: 0.5, height: 0.5 } });
+
+  const { data, info } = await sharp(out).raw().toBuffer({ resolveWithObject: true });
+  let red = 0;
+  for (let i = 0; i < data.length; i += info.channels) {
+    if (data[i] > 180 && data[i + 1] < 90) red += 1;
+  }
+  const ratio = red / (info.width * info.height);
+  assert.ok(ratio > 0.9,
+    `cropping the right half must yield the red region (got ${(ratio * 100).toFixed(1)}%)`);
+
+  const m = await sharp(out).metadata();
+  assert.equal(m.width, m.height, 'a cropped avatar is still square');
+});
+
+test('an out-of-bounds crop is clamped, not thrown', async () => {
+  const src = await portrait('bounds.jpg', 800, 1000);
+  const out = path.join(tmp, 'bounds.webp');
+
+  // Deliberately impossible: origin past the far edge, size larger than the image.
+  await convertToSquareWebp(src, out, { maxSize: 400, crop: { x: 0.95, y: 0.95, width: 2, height: 2 } });
+
+  const m = await sharp(out).metadata();
+  assert.equal(m.width, m.height, 'still square');
+  assert.ok(m.width > 0, 'still produced an image rather than failing the upload');
+});
+
+test('a nonsense crop cannot crash the upload', async () => {
+  const src = await portrait('junk.jpg', 600, 800);
+  for (const crop of [
+    { x: -5, y: -5, width: -1, height: -1 },
+    { x: NaN, y: NaN, width: NaN, height: NaN },
+    { x: 0, y: 0, width: 0, height: 0 },
+  ]) {
+    const out = path.join(tmp, `junk-${Math.random().toString(36).slice(2)}.webp`);
+    await convertToSquareWebp(src, out, { maxSize: 300, crop });
+    const m = await sharp(out).metadata();
+    assert.equal(m.width, m.height, `square for ${JSON.stringify(crop)}`);
+  }
+});

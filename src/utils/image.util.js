@@ -25,6 +25,9 @@ const sharp = require('sharp');
 // genuinely can exceed 30 MP — are unaffected by this limit.
 const MAX_INPUT_PIXELS = 50_000_000;
 
+/** Crop rectangles come from a client and are never assumed to be sane. */
+const clamp01 = (n) => Math.min(Math.max(Number(n) || 0, 0), 1);
+
 /**
  * Resizes an image and encodes it as WebP.
  *
@@ -73,13 +76,40 @@ const convertToWebp = async (inputPath, outputPath, { resize, quality = 85 }) =>
  * @param {number} [opts.quality=90]
  * @returns {Promise<number>} the edge length actually produced
  */
-const convertToSquareWebp = async (inputPath, outputPath, { maxSize = 1000, quality = 90 } = {}) => {
+const convertToSquareWebp = async (inputPath, outputPath, { maxSize = 1000, quality = 90, crop = null } = {}) => {
   const meta = await sharp(inputPath, { limitInputPixels: MAX_INPUT_PIXELS }).metadata();
-  const shortest = Math.min(meta.width || maxSize, meta.height || maxSize);
-  const edge = Math.max(Math.min(shortest, maxSize), 1);
+  const srcW = meta.width || maxSize;
+  const srcH = meta.height || maxSize;
 
-  await sharp(inputPath, { limitInputPixels: MAX_INPUT_PIXELS })
-    .resize(edge, edge, { fit: 'cover', position: 'attention' })
+  let pipeline = sharp(inputPath, { limitInputPixels: MAX_INPUT_PIXELS });
+  let available = Math.min(srcW, srcH);
+
+  // An explicit crop always wins over the automatic one. `attention` is a good
+  // guess, but it is still a guess — when the person has told us which part of
+  // their own photo to keep, guessing again would be worse than useless.
+  //
+  // Rectangles arrive normalised (0-1) rather than in pixels because the client
+  // may be working from a downscaled preview, and because a fraction cannot go
+  // stale if the source is re-encoded. Everything is clamped to the real
+  // dimensions here: the crop is user input, so it is never trusted to be
+  // in-bounds, and an out-of-range extract() throws rather than degrading.
+  if (crop) {
+    const left = Math.round(clamp01(crop.x) * srcW);
+    const top = Math.round(clamp01(crop.y) * srcH);
+    const maxW = Math.max(srcW - left, 1);
+    const maxH = Math.max(srcH - top, 1);
+    // Square in PIXELS, which is what the circular frame in the app shows —
+    // so the two axes are reconciled here rather than trusting them to agree.
+    const size = Math.max(Math.min(Math.round(clamp01(crop.width) * srcW), maxW, maxH), 1);
+
+    pipeline = pipeline.extract({ left, top, width: size, height: size });
+    available = size;
+  }
+
+  const edge = Math.max(Math.min(available, maxSize), 1);
+
+  await pipeline
+    .resize(edge, edge, crop ? { fit: 'fill' } : { fit: 'cover', position: 'attention' })
     .webp({ quality })
     .toFile(outputPath);
 

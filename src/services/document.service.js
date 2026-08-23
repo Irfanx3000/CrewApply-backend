@@ -109,7 +109,12 @@ const uploadDocument = async ({ userId, file, category, type, metadata, destDir,
 
 // ── Profile photo ─────────────────────────────────────────────────────────────
 
-const uploadProfilePhoto = async (userId, file) => {
+/**
+ * @param {object} [crop] normalised {x, y, width, height} chosen by the user in
+ *   the app's adjuster. Omitted for uploads from older clients, which keep the
+ *   automatic subject-detection crop — so this stays backward compatible.
+ */
+const uploadProfilePhoto = async (userId, file, crop = null) => {
   assertRealFileType(file.path, IMAGE_MIMES);
 
   const outputFilename = `${path.parse(file.filename).name}.webp`;
@@ -136,7 +141,7 @@ const uploadProfilePhoto = async (userId, file) => {
   // fit, and only a square master guarantees none of them distorts or re-crops
   // it differently. withoutEnlargement stops a small upload being blown up into
   // fake resolution.
-  await convertToSquareWebp(file.path, outputPath, { maxSize: 1000, quality: 90 });
+  await convertToSquareWebp(file.path, outputPath, { maxSize: 1000, quality: 90, crop });
   deleteTempFile(file.path);
 
   const relativePath = `uploads/profile/${outputFilename}`;

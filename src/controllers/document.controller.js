@@ -15,7 +15,16 @@ const uploadProfilePhoto = asyncHandler(async (req, res) => {
     throw new AppError(AUTH_MESSAGES.NO_FILE_UPLOADED, HTTP_STATUS.BAD_REQUEST, 'NO_FILE');
   }
 
-  const doc = await documentService.uploadProfilePhoto(req.user._id, req.file);
+  // Multipart text fields arrive as strings. A crop is only honoured when all
+  // four values are present and parse — a partial rectangle is discarded rather
+  // than half-applied, which would silently mis-crop someone's photo.
+  const { cropX, cropY, cropWidth, cropHeight } = req.body || {};
+  const parts = [cropX, cropY, cropWidth, cropHeight].map(Number);
+  const crop = parts.every((n) => Number.isFinite(n))
+    ? { x: parts[0], y: parts[1], width: parts[2], height: parts[3] }
+    : null;
+
+  const doc = await documentService.uploadProfilePhoto(req.user._id, req.file, crop);
 
   return successResponse(res, AUTH_MESSAGES.PROFILE_PHOTO_UPDATED, { document: doc });
 });
