@@ -8,6 +8,7 @@ const careerProfileService = require('./careerProfile.service');
 const aggregation = require('./careerProfileAggregation.service');
 const composer = require('./resumeComposer.service');
 const { contentHash } = require('./resumeRender.service');
+const entitlementService = require('./entitlement.service');
 const AppError = require('../utils/AppError');
 const { HTTP_STATUS } = require('../constants/httpStatus');
 const { AUTH_MESSAGES } = require('../constants/messages');
@@ -22,7 +23,8 @@ const pick = (source, fields) =>
 
 /**
  * Flags every already-generated resume whose PDF no longer matches the profile
- * it was built from.
+ * it was built from, OR which still carries a watermark the user has since
+ * paid to remove.
  *
  * A generated PDF is a frozen artifact — deleting a certificate in My
  * Documents can't reach inside a file that's already on disk. The live
@@ -35,6 +37,23 @@ const pick = (source, fields) =>
  * this covers every input to the resume — deleted/added documents, edited
  * personal details, career profile entries, template switches — not just
  * documents.
+ *
+ * ── The watermark case ──────────────────────────────────────────────────────
+ * Content staleness alone missed the one transition users are most likely to
+ * complain about. Generate a resume on the free tier and the PDF is
+ * watermarked. Subscribe. The content has not changed, so the hash still
+ * matches, `isStale` stays false, and the file on disk keeps its watermark —
+ * the user has just paid specifically to remove it and nothing in the app even
+ * mentions it. They would have to guess that editing something and
+ * regenerating is the fix.
+ *
+ * So entitlement is now part of the question: a resume whose last render was
+ * watermarked is stale the moment the user holds a live subscription. The
+ * regeneration itself stays user-initiated — this only surfaces the offer.
+ *
+ * `staleReason` is ADDITIVE and advisory. `isStale` keeps its exact previous
+ * meaning and shape, so any existing client that only reads that flag is
+ * unaffected.
  */
 const withStaleness = async (userId, configs) => {
   const generated = configs.filter(
@@ -42,24 +61,59 @@ const withStaleness = async (userId, configs) => {
   );
   // Never generated (or generated before hashes were recorded) => nothing to
   // be stale against; skip the profile/aggregation reads entirely.
-  if (!generated.length) return configs.map((c) => ({ ...c, isStale: false }));
+  if (!generated.length) {
+    return configs.map((c) => ({ ...c, isStale: false, staleReason: null }));
+  }
 
-  const [careerProfile, aggregated] = await Promise.all([
+  // Entitlement is read from the same authority the renderer uses, so the app
+  // can never offer "regenerate to remove the watermark" to someone whose
+  // subscription has actually lapsed — they would get another watermarked file
+  // and a support ticket.
+  const [careerProfile, aggregated, isSubscribed] = await Promise.all([
     CareerProfile.findOne({ user: userId }).lean(),
     aggregation.getAggregatedProfile(userId),
+    entitlementService.hasActiveSubscription(userId),
   ]);
-  if (!careerProfile) return configs.map((c) => ({ ...c, isStale: false }));
+  if (!careerProfile) {
+    return configs.map((c) => ({ ...c, isStale: false, staleReason: null }));
+  }
 
-  const staleIds = new Set(
-    generated
-      .filter((c) => {
-        const current = contentHash(composer.resolveContent(careerProfile, c, aggregated), c.templateId);
-        return current !== c.metadata.contentHashAtLastGeneration;
-      })
-      .map((c) => String(c._id))
-  );
+  // Which of these resumes' last renders carried a watermark. One batched
+  // query rather than one per resume — this runs on every list of the Career
+  // Profile screen. Only asked when the user is actually subscribed, because
+  // for a free user the answer changes nothing: they would get a watermark
+  // again either way.
+  let watermarkedDocIds = new Set();
+  if (isSubscribed) {
+    const docIds = generated.map((c) => c.metadata.lastGeneratedDocumentId);
+    const watermarkedDocs = await Document.find({
+      _id: { $in: docIds },
+      user: userId,
+      'generatedFrom.watermarked': true,
+    })
+      .select('_id')
+      .lean();
+    watermarkedDocIds = new Set(watermarkedDocs.map((d) => String(d._id)));
+  }
 
-  return configs.map((c) => ({ ...c, isStale: staleIds.has(String(c._id)) }));
+  const reasons = new Map();
+  for (const c of generated) {
+    const current = contentHash(composer.resolveContent(careerProfile, c, aggregated), c.templateId);
+    // Content wins when both are true: it is the more urgent of the two — the
+    // PDF is showing details that are simply wrong, whereas a watermark is
+    // merely no longer deserved.
+    if (current !== c.metadata.contentHashAtLastGeneration) {
+      reasons.set(String(c._id), 'content');
+    } else if (watermarkedDocIds.has(String(c.metadata.lastGeneratedDocumentId))) {
+      reasons.set(String(c._id), 'watermark');
+    }
+  }
+
+  return configs.map((c) => ({
+    ...c,
+    isStale: reasons.has(String(c._id)),
+    staleReason: reasons.get(String(c._id)) || null,
+  }));
 };
 
 const list = async (userId) => {
