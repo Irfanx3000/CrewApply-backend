@@ -83,6 +83,13 @@ const regionCtx = (ctx, region, width) => ({
 // below) is threaded through every call so template config actually reaches
 // the PDF instead of being silently dropped in favor of hardcoded values. ────
 
+// The name's rendered point size, from the same numbers buildStyles uses.
+// Needed to centre the banner header without guessing at its height.
+function typographyNameSize(ctx) {
+  const t = ctx.typography || {};
+  return (t.baseFontSize || 10) * (t.headingScale || 1.4) * (t.nameScale ?? 1.3);
+}
+
 function paintHeader(b, ctx) {
   const { spacing, palette } = ctx;
   const style = b.props.headerStyle || 'centered';
@@ -112,6 +119,20 @@ function paintHeader(b, ctx) {
   // is no rule to draw when the colour itself is the treatment.
   if (b.props.placement === 'banner') {
     const size = b.props.photoSize || 74;
+    // The band is full-bleed page paint, but its CONTENTS are not: without an
+    // inset the name starts hard against the left edge and the contact column
+    // runs off the right. Uses the same padding the columns below use, so the
+    // header lines up with the body rather than floating independently.
+    const pad = ctx.spacing.columnPadding ?? 24;
+    // Vertically centre within the band. The band height is fixed by the
+    // template (a fraction of the page), while the header content is however
+    // tall it is — so without this the content sits at the top and leaves a
+    // slab of empty colour beneath it.
+    const bandHeight = ctx.bannerHeight || 0;
+    const contentHeight = Math.max(size, (typographyNameSize(ctx) * 2.4));
+    const topPad = bandHeight > contentHeight
+      ? Math.max((bandHeight - contentHeight) / 2, 8)
+      : 12;
     const identity = { width: '*', stack: [nameNode], margin: [0, 0, 0, 0] };
     if (b.props.headline) {
       identity.stack.push({ text: b.props.headline, style: 'headline', color: palette.muted, margin: [0, 2, 0, 0] });
@@ -145,7 +166,9 @@ function paintHeader(b, ctx) {
     return {
       columns: cols,
       columnGap: 14,
-      margin: [0, 0, 0, bottomMargin],
+      // Bottom margin carries the header clear of the band's lower edge so the
+      // first section does not start on colour.
+      margin: [pad, topPad, pad, Math.max(bandHeight - contentHeight - topPad, 0) + bottomMargin],
     };
   }
 
@@ -582,7 +605,20 @@ const PAINTERS = {
 
 function paintBlock(b, ctx) {
   const painter = PAINTERS[b.type];
-  return painter ? painter(b, ctx) : null;
+  if (!painter) return null;
+
+  // A block may declare the palette region it MUST be painted in — the banner
+  // header does, because it sits in the content stream above the columns yet
+  // lands on coloured paint. Without this, only Columns could switch regions,
+  // so that header silently inherited the main palette: its name resolved to
+  // colors.primary, which in a template whose banner IS the primary colour
+  // means the name was painted in the band's own colour and disappeared.
+  const declared = b.props?.region;
+  const effectiveCtx = declared && declared !== ctx.region
+    ? regionCtx(ctx, declared, ctx.width)
+    : ctx;
+
+  return painter(b, effectiveCtx);
 }
 
 function buildStyles(typography, colors) {
@@ -827,6 +863,9 @@ async function render(documentModel) {
     region: REGIONS.MAIN,
     palette: resolvePalette(colors, REGIONS.MAIN),
     width: contentWidth,
+    // So the banner header can centre itself inside the band the page painter
+    // draws. One number, computed once, read by both.
+    bannerHeight: page.banner?.enabled ? dims.height * (page.banner.heightRatio ?? 0.16) : 0,
   };
 
   await prepareAssets(blocks, {});
@@ -855,18 +894,25 @@ async function render(documentModel) {
   // watermark silently stopped being visible on new designs.
   const bands = pageBands(dims, page);
 
-  // A dark page ground has to be painted first, under every band.
+  // ONE canvas node holding every rectangle, not one node per band.
+  //
+  // pdfmake FLOWS the nodes of a background array like ordinary content — it
+  // does not overlay them. A second canvas node therefore starts below the
+  // first node's height, so a page-height sidebar band pushed the header
+  // banner completely off the page and it silently never appeared. Primitives
+  // inside a SINGLE canvas share one coordinate space and overlay correctly,
+  // which is what page decoration needs.
+  //
+  // Order is significant and matches pageBands(): ground, then sidebar, then
+  // banner — later rectangles paint over earlier ones.
+  const bandShapes = [];
   if (pageBackground && pageBackground !== '#FFFFFF') {
-    layers.push({
-      canvas: [{ type: 'rect', x: 0, y: 0, w: dims.width, h: dims.height, color: pageBackground }],
-    });
+    bandShapes.push({ type: 'rect', x: 0, y: 0, w: dims.width, h: dims.height, color: pageBackground });
   }
-
   for (const band of bands) {
-    layers.push({
-      canvas: [{ type: 'rect', x: band.x, y: band.y, w: band.w, h: band.h, color: band.color }],
-    });
+    bandShapes.push({ type: 'rect', x: band.x, y: band.y, w: band.w, h: band.h, color: band.color });
   }
+  if (bandShapes.length) layers.push({ canvas: bandShapes });
 
   if (watermark) {
     layers.push({

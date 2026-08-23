@@ -371,7 +371,14 @@ function buildSingleColumn(content, layout) {
 // simply continues — verified, not assumed.
 function buildTwoColumn(content, layout) {
   const sidebarOn = !!layout.page?.sidebar?.enabled;
-  const leftRegion = sidebarOn ? REGIONS.SIDEBAR : REGIONS.MAIN;
+  // WHICH column the band is under decides which one takes the sidebar
+  // palette. This used to assume the band was always on the left, so a
+  // right-hand band painted the LEFT column in sidebar colours (light text on
+  // white paper) and the right column in main colours (dark text on the dark
+  // band) — every word on the page invisible, in both directions at once.
+  const bandOnLeft = (layout.page?.sidebar?.side || 'left') !== 'right';
+  const leftRegion = sidebarOn && bandOnLeft ? REGIONS.SIDEBAR : REGIONS.MAIN;
+  const rightRegion = sidebarOn && !bandOnLeft ? REGIONS.SIDEBAR : REGIONS.MAIN;
 
   const placement = layout.header?.placement || 'document';
   // 'banner' lifts the identity block OUT of both columns so it can span the
@@ -379,16 +386,16 @@ function buildTwoColumn(content, layout) {
   // the header inside a column, exactly as before.
   const bannerHeader = placement === 'banner' ? buildHeader(content, layout) : null;
 
+  // 'sidebar' placement means "open the BAND", not "open the left column" —
+  // which are the same thing only when the band happens to be on the left.
+  const sidebarHeader = placement === 'sidebar' ? buildHeader(content, layout) : null;
+
   const left = [];
-  // In sidebar placement the identity block (photo, name, headline) opens the
-  // sidebar instead of spanning the page.
-  if (placement === 'sidebar') {
-    const header = buildHeader(content, layout);
-    if (header) left.push(header);
-  }
+  if (sidebarHeader && bandOnLeft) left.push(sidebarHeader);
   left.push(...buildSections(layout.columns.left, content, layout));
 
   const right = [];
+  if (sidebarHeader && !bandOnLeft) right.push(sidebarHeader);
   if (placement === 'document') {
     const header = buildHeader(content, layout);
     if (header) right.push(header);
@@ -412,7 +419,7 @@ function buildTwoColumn(content, layout) {
       T.COLUMNS,
       {
         widths: [`${(leftRatio * 100).toFixed(4)}%`, '*'],
-        regions: [leftRegion, REGIONS.MAIN],
+        regions: [leftRegion, rightRegion],
         padding: layout.spacing?.columnPadding ?? 24,
         paddingTop: layout.spacing?.columnPaddingTop ?? layout.spacing?.columnPadding ?? 24,
       },

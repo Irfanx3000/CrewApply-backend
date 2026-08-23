@@ -49,3 +49,5 @@ uploads/
 # Startup logs
 startup.log
 startup.err
+# Local template preview renders (see scripts/previewResumeTemplates.js)
+.tplout/
