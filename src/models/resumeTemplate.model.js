@@ -186,6 +186,11 @@ const resumeTemplateSchema = new mongoose.Schema(
         // rather than as a bare line under the name.
         headlineBadge: { type: Boolean, default: false },
         headlineBadgeColor: { type: String, default: '#0D3E85' },
+        // Which edge the identity block sits against inside the banner band.
+        // A band whose name is right-aligned over a left-hand About panel is a
+        // different composition from one that leads with the name, and neither
+        // is expressible by column order alone.
+        bannerAlign: { type: String, enum: { values: ['left', 'right'], message: 'Invalid banner alignment.' }, default: 'left' },
         // Render the contact details as icon rows inside the banner instead of
         // the single "email • phone • city" line.
         contactInBanner: { type: Boolean, default: false },

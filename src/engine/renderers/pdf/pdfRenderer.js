@@ -173,6 +173,14 @@ function paintHeader(b, ctx) {
     }
 
     const centred = b.props.photoSide === 'center';
+    const alignRight = b.props.bannerAlign === 'right';
+    // Right-aligned identity: every line in the stack aligns to the band's
+    // right edge, and a flexible spacer ahead of it pushes the block over.
+    // Setting alignment on the column alone would not move the filled headline
+    // block, which sizes to its own content.
+    if (alignRight) {
+      identityStack.forEach((node) => { node.alignment = 'right'; });
+    }
     // Flexible on both sides so the photo lands on the band's true centre.
     // Without this the identity block absorbs all the slack and pushes the
     // photo off to one side, which is what "centred" visibly was not.
@@ -183,6 +191,7 @@ function paintHeader(b, ctx) {
       ? { width: size, stack: [{ image: photoPath, width: size, height: size }] }
       : null;
 
+    if (alignRight) cols.push({ width: '*', text: '' });
     if (photoNode && b.props.photoSide === 'left') cols.push(photoNode);
     cols.push(identity);
     if (photoNode && centred) cols.push(photoNode);

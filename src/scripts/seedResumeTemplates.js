@@ -179,6 +179,11 @@ const TEMPLATES = [
         // The dark column runs the full height on the RIGHT, with the identity
         // block sitting at its top — the mirror of maritime-sidebar.
         sidebar: { enabled: true, widthRatio: 0.38, side: 'right', color: '#3A3A3A' },
+        // The light grey panel across the top — the defining element of this
+        // design. Painted AFTER the sidebar (see pageBands ordering), so it
+        // covers the dark band's upper section and the charcoal column appears
+        // to begin below it, exactly as in the source.
+        banner: { enabled: true, heightRatio: 0.215, span: 'full', color: '#E4E4E4' },
       },
       typography: {
         fontFamily: 'Roboto',
@@ -196,12 +201,24 @@ const TEMPLATES = [
         muted: '#8A8A8A', divider: '#D2D2D2', background: '#FFFFFF',
         sidebarText: '#FFFFFF', sidebarMuted: '#C9C9C9',
         sidebarAccent: '#FFFFFF', sidebarDivider: '#5A5A5A',
+        // The banner band is LIGHT here, so its palette is dark-on-light —
+        // the inverse of the usual coloured-band case, and the reason these
+        // are separate tokens rather than derived from the sidebar.
+        bannerText: '#2B2B2B', bannerMuted: '#6E6E6E', bannerAccent: '#3A3A3A',
       },
-      spacing: { sectionGap: 15, itemGap: 7, blockPadding: 3, columnPadding: 26, columnPaddingTop: 30 },
+      // Ordinary top padding, NOT the banner height. The banner header block
+      // sits in the content flow and already reserves the full band height
+      // through its own bottom margin, so the columns start below the panel on
+      // their own — adding the band height here again pushed every section a
+      // second panel's worth down the page.
+      spacing: { sectionGap: 15, itemGap: 7, blockPadding: 3, columnPadding: 26, columnPaddingTop: 18 },
       header: {
-        style: 'centered', showPhoto: true, photoShape: 'circle', photoSize: 92,
+        style: 'centered', showPhoto: true, photoShape: 'circle', photoSize: 104,
         photoRingWidth: 4, photoRingColor: '#FFFFFF',
-        placement: 'sidebar', showContactLine: false,
+        // Identity lives in the grey panel, hard right, with the photo beside
+        // it over the charcoal column — the arrangement in the source design.
+        placement: 'banner', photoSide: 'right', bannerAlign: 'right',
+        nameLayout: 'single', showContactLine: false,
       },
       sectionTitle: { variant: 'plain', sidebarSizeScale: 0.8, iconBadge: true, iconBadgeColor: '#3A3A3A' },
       divider: { style: 'none', thickness: 0, color: '#D2D2D2' },

@@ -57,6 +57,7 @@ function buildHeader(content, layout) {
     placement: layout.header?.placement || 'document',
     photoSide: layout.header?.photoSide || 'left',
     nameLayout: layout.header?.nameLayout || 'single',
+    bannerAlign: layout.header?.bannerAlign || 'left',
     headlineBadge: !!layout.header?.headlineBadge,
     headlineBadgeColor: layout.header?.headlineBadgeColor || null,
     // Split once here rather than in the painter: which part is the family
