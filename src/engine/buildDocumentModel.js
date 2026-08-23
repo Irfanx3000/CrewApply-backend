@@ -56,6 +56,15 @@ function buildHeader(content, layout) {
     // Banner placement only — ignored by the other two placements.
     placement: layout.header?.placement || 'document',
     photoSide: layout.header?.photoSide || 'left',
+    nameLayout: layout.header?.nameLayout || 'single',
+    headlineBadge: !!layout.header?.headlineBadge,
+    headlineBadgeColor: layout.header?.headlineBadgeColor || null,
+    // Split once here rather than in the painter: which part is the family
+    // name is a property of the DATA, and a renderer should not be parsing
+    // names. Everything after the first token is the family name, so
+    // multi-word surnames stay together.
+    givenName: (content.personal.fullName || '').trim().split(/\s+/)[0] || '',
+    familyName: (content.personal.fullName || '').trim().split(/\s+/).slice(1).join(' '),
     // Contact rendered as icon rows INSIDE the band, instead of (or as well
     // as) the single strip line. The banner designs put phone/email/location
     // in the coloured area beside the name.

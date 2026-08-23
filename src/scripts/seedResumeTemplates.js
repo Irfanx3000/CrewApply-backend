@@ -239,7 +239,7 @@ const TEMPLATES = [
         margins: { top: 0, right: 0, bottom: 28, left: 0 },
         columns: 2,
         sidebar: { enabled: false, widthRatio: 0.35, side: 'left', color: '#FFFFFF' },
-        banner: { enabled: true, heightRatio: 0.155, span: 'full', color: '#1668C4' },
+        banner: { enabled: true, heightRatio: 0.205, span: 'full', color: '#1668C4' },
       },
       typography: {
         fontFamily: 'Roboto',
@@ -247,8 +247,8 @@ const TEMPLATES = [
         headingScale: 1.35,
         lineHeight: 1.35,
         sectionTitleCase: 'upper',
-        nameScale: 2,
-        nameLetterSpacing: 0.4,
+        nameScale: 1.72,
+        nameLetterSpacing: 0.3,
         sectionTitleLetterSpacing: 0.8,
         paragraphAlign: 'justify',
       },
@@ -259,9 +259,14 @@ const TEMPLATES = [
       },
       spacing: { sectionGap: 13, itemGap: 6, blockPadding: 3, columnPadding: 30, columnPaddingTop: 16 },
       header: {
-        style: 'left', showPhoto: true, photoShape: 'circle', photoSize: 78,
-        photoRingWidth: 3, photoRingColor: '#FFFFFF',
-        placement: 'banner', photoSide: 'right', contactInBanner: true,
+        style: 'left', showPhoto: true, photoShape: 'circle',
+        // Large and centred, as in the source design: the photo is the focal
+        // point of the band, not an accessory beside the name.
+        photoSize: 122, photoRingWidth: 4, photoRingColor: '#FFFFFF',
+        placement: 'banner', photoSide: 'center', contactInBanner: true,
+        // Given name light on line one, FAMILY NAME heavy on line two, with
+        // the role in a filled block beneath.
+        nameLayout: 'stacked', headlineBadge: true, headlineBadgeColor: '#0F4F9E',
         showContactLine: false,
       },
       sectionTitle: { variant: 'underline', sidebarSizeScale: 0.9, iconBadge: false },

@@ -91,7 +91,7 @@ function typographyNameSize(ctx) {
 }
 
 function paintHeader(b, ctx) {
-  const { spacing, palette } = ctx;
+  const { spacing, palette, typography = {} } = ctx;
   const style = b.props.headerStyle || 'centered';
   const alignment = style === 'left' ? 'left' : 'center';
   const bottomMargin = spacing.sectionGap ?? 12;
@@ -133,31 +133,80 @@ function paintHeader(b, ctx) {
     const topPad = bandHeight > contentHeight
       ? Math.max((bandHeight - contentHeight) / 2, 8)
       : 12;
-    const identity = { width: '*', stack: [nameNode], margin: [0, 0, 0, 0] };
-    if (b.props.headline) {
-      identity.stack.push({ text: b.props.headline, style: 'headline', color: palette.muted, margin: [0, 2, 0, 0] });
+    const nameSize = typographyNameSize(ctx);
+
+    // Stacked name: given name light, FAMILY NAME heavy and uppercased on its
+    // own line. Falls back to the single-line node whenever there is no family
+    // name to split off, so a one-word name never renders as a lone blank line.
+    const identityStack = [];
+    if (b.props.nameLayout === 'stacked' && b.props.familyName) {
+      const line = { fontSize: nameSize, color: palette.name, lineHeight: 1.02 };
+      identityStack.push({ ...line, text: b.props.givenName, bold: false, characterSpacing: b.props.nameLetterSpacing || 0 });
+      identityStack.push({ ...line, text: b.props.familyName.toUpperCase(), bold: true, characterSpacing: b.props.nameLetterSpacing || 0 });
+    } else {
+      identityStack.push(nameNode);
     }
+
+    if (b.props.headline) {
+      if (b.props.headlineBadge) {
+        // A filled block behind the headline. pdfmake has no background
+        // property on a text node, so it is a single-cell table whose fill IS
+        // the block — the only primitive that paints behind text and still
+        // grows with it.
+        identityStack.push({
+          table: { body: [[{
+            text: b.props.headline.toUpperCase(),
+            fontSize: (typography.baseFontSize || 10) * 0.92,
+            bold: true,
+            characterSpacing: 0.5,
+            color: palette.text,
+            fillColor: b.props.headlineBadgeColor || palette.accent,
+            border: [false, false, false, false],
+            margin: [7, 3, 7, 3],
+          }]] },
+          layout: 'noBorders',
+          margin: [0, 7, 0, 0],
+        });
+      } else {
+        identityStack.push({ text: b.props.headline, style: 'headline', color: palette.muted, margin: [0, 2, 0, 0] });
+      }
+    }
+
+    const centred = b.props.photoSide === 'center';
+    // Flexible on both sides so the photo lands on the band's true centre.
+    // Without this the identity block absorbs all the slack and pushes the
+    // photo off to one side, which is what "centred" visibly was not.
+    const identity = { width: centred ? '*' : '*', stack: identityStack };
 
     const cols = [];
     const photoNode = photoPath
       ? { width: size, stack: [{ image: photoPath, width: size, height: size }] }
       : null;
 
-    if (photoNode && b.props.photoSide !== 'right') cols.push(photoNode);
+    if (photoNode && b.props.photoSide === 'left') cols.push(photoNode);
     cols.push(identity);
+    if (photoNode && centred) cols.push(photoNode);
     if (photoNode && b.props.photoSide === 'right') cols.push(photoNode);
 
     // Contact rows live in the band opposite the photo. Falls back to nothing
     // when contactInBanner is off, in which case the usual strip line applies.
     if (b.props.bannerContact?.length) {
       cols.push({
-        width: 'auto',
+        // Flexible, not 'auto', when the photo is centred — otherwise the
+        // contact block hugs its text and the photo drifts off-centre.
+        width: centred ? '*' : 'auto',
         stack: b.props.bannerContact.map((row) => {
-          const glyph = iconNode(row.icon, palette.muted, 8);
-          const text = { width: '*', text: row.text, color: palette.text, fontSize: 8 };
+          // Was a hardcoded 8pt, which read as fine print next to a 25pt name
+          // and was the single most-noticed problem with the band. Derived from
+          // the template's own base size so it scales with the design instead
+          // of being a magic number, and sized at parity with body copy —
+          // these are details someone has to actually read.
+          const fs = (typography.baseFontSize || 10) * 1.02;
+          const glyph = iconNode(row.icon, palette.muted, fs * 1.05);
+          const text = { width: '*', text: row.text, color: palette.text, fontSize: fs };
           return glyph
-            ? { columns: [{ width: 13, stack: [glyph], margin: [0, 1, 0, 0] }, text], columnGap: 0, margin: [0, 0, 0, 3] }
-            : { ...text, width: undefined, margin: [0, 0, 0, 3] };
+            ? { columns: [{ width: fs * 1.9, stack: [glyph], margin: [0, 1.5, 0, 0] }, text], columnGap: 0, margin: [0, 0, 0, 5] }
+            : { ...text, width: undefined, margin: [0, 0, 0, 5] };
         }),
         margin: [12, 2, 0, 0],
       });

@@ -172,7 +172,20 @@ const resumeTemplateSchema = new mongoose.Schema(
         placement: { type: String, enum: { values: ['document', 'sidebar', 'banner'], message: 'Invalid header placement.' }, default: 'document' },
         // Banner placement only: photo on the left with the name beside it, or
         // name on the left with the photo beside it. Both designs exist.
-        photoSide: { type: String, enum: { values: ['left', 'right'], message: 'Invalid photo side.' }, default: 'left' },
+        // 'center' puts the photo between the identity block and the contact
+        // block, with equal flexible space either side so it lands on the true
+        // horizontal centre of the band rather than wherever the text happens
+        // to push it.
+        photoSide: { type: String, enum: { values: ['left', 'right', 'center'], message: 'Invalid photo side.' }, default: 'left' },
+        // 'stacked' breaks the name across two lines — given name on the first,
+        // FAMILY NAME in heavier, uppercased type on the second. It is the
+        // single most recognisable thing about a display-name résumé header and
+        // cannot be reproduced by size alone.
+        nameLayout: { type: String, enum: { values: ['single', 'stacked'], message: 'Invalid name layout.' }, default: 'single' },
+        // Draws the headline (rank/role) as light type inside a filled block
+        // rather than as a bare line under the name.
+        headlineBadge: { type: Boolean, default: false },
+        headlineBadgeColor: { type: String, default: '#0D3E85' },
         // Render the contact details as icon rows inside the banner instead of
         // the single "email • phone • city" line.
         contactInBanner: { type: Boolean, default: false },
