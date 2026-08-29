@@ -15,6 +15,7 @@ const { verifyGoogleIdToken } = require('./oAuth.service');
 const { createOtp, verifyOtp, clearOtp } = require('./otp.service');
 const auditService = require('./audit.service');
 const referralService = require('./referral.service');
+const promoCodeService = require('./promoCode.service');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -159,8 +160,15 @@ const register = async (body, req) => {
   // created on demand (see referral.service.js's generateCode(), wired to
   // POST /user/referral/generate) so the mobile Refer & Earn screen can offer
   // an explicit "Generate Code" action instead of showing one pre-filled.
+  //
+  // The SAME input also accepts an influencer promo code — resolved only if
+  // the referral lookup missed, so a user never has to know which of the two
+  // kinds of code they were given. A code can only ever be one or the other
+  // (the two code spaces are separate collections with their own unique
+  // indexes), so the fallback is unambiguous.
   const referrer = referralCode ? await referralService.resolveReferrer(referralCode, { email, phone: normalizedPhone }) : null;
-  const referralApplied = referralCode ? !!referrer : null;
+  const promo = referralCode && !referrer ? await promoCodeService.resolveByCode(referralCode) : null;
+  const referralApplied = referralCode ? !!(referrer || promo) : null;
 
   const user = await User.create({
     name,
@@ -176,6 +184,7 @@ const register = async (body, req) => {
     isActive: false,
     emailVerified: false,
     referredBy: referrer ? referrer._id : null,
+    promoCode: promo ? promo._id : null,
   });
 
   // Generate OTP and send — non-blocking failure does NOT abort registration.
@@ -275,6 +284,14 @@ const verifyMobile = async ({ email, otp }, req) => {
   if (user.referredBy) {
     referralService.attribute(user, req).catch((err) => {
       console.error('AuthService.verifyMobile: referral attribution failed (non-fatal):', err.message);
+    });
+  }
+
+  // Same reasoning for the promo counter: an abandoned, never-verified
+  // registration must not burn a slot on a usage-limited influencer code.
+  if (user.promoCode) {
+    promoCodeService.attribute(user, req).catch((err) => {
+      console.error('AuthService.verifyMobile: promo attribution failed (non-fatal):', err.message);
     });
   }
 

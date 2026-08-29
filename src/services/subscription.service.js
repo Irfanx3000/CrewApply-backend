@@ -14,6 +14,7 @@ const emailService = require('./email.service');
 const pricingSettingService = require('./pricingSetting.service');
 const { getApplicationUsage, getQuotaUsage } = require('./application.service');
 const referralService = require('./referral.service');
+const promoCodeService = require('./promoCode.service');
 const walletService = require('./wallet.service');
 const AppError = require('../utils/AppError');
 const { config } = require('../config');
@@ -220,7 +221,10 @@ const classifyScenario = (hasActiveSub, isSameSelection, existingActive, plan, o
 // Data-driven price breakdown — the mobile PaymentBreakdownRow component
 // renders this array directly, only ever showing lines that actually apply.
 const buildPriceBreakdown = (payment) => {
-  const rows = [{ label: 'Plan Price', amount: payment.amountBeforeCredit, kind: 'charge' }];
+  const rows = [
+    { label: 'Plan Price', amount: payment.amountBeforeCredit + (payment.promoDiscount || 0), kind: 'charge' },
+  ];
+  if (payment.promoDiscount > 0) rows.push({ label: 'Promo Discount', amount: -payment.promoDiscount, kind: 'credit' });
   if (payment.proratedCredit > 0) rows.push({ label: 'Unused Subscription Credit', amount: -payment.proratedCredit, kind: 'credit' });
   if (payment.walletApplied > 0) rows.push({ label: 'Wallet Balance Used', amount: -payment.walletApplied, kind: 'credit' });
   rows.push({ label: 'Amount Payable', amount: payment.amount, kind: 'total' });
@@ -242,6 +246,7 @@ const buildSummary = async ({ payment, plan, reused = false, activated = false, 
     tier: payment.tier,
     billingCycle: payment.billingCycle,
     walletApplied: payment.walletApplied || 0,
+    promoDiscount: payment.promoDiscount || 0,
     proratedCredit: payment.proratedCredit || 0,
     excessProrationCredit: payment.excessProrationCredit || 0,
     // Lets the summary explain a zero/small credit rather than leaving the
@@ -364,7 +369,17 @@ const createOrder = async ({ user, tier, billingCycle, applyWalletCredit = true 
   //    launch-price discount under proration credit too — that'd be a
   //    double discount and an incentive to tier-hop for cheap "first
   //    purchases").
-  const baseAmount = isSwitch ? plan.pricing[region].amount : await computeAmount(plan, user._id, region);
+  const listAmount = isSwitch ? plan.pricing[region].amount : await computeAmount(plan, user._id, region);
+
+  // 4a) Influencer promo discount. Applied to the plan price BEFORE proration
+  //     and wallet credit, so it reads as what it is — a cheaper plan — and so
+  //     the influencer's commission is computed on the cash that actually
+  //     arrives after it. quoteDiscount() returns zero for anything that
+  //     doesn't apply (no code, inactive, expired, or the user has already
+  //     bought a subscription before), so there's no branch here.
+  const { promo, discount: promoDiscount } = await promoCodeService.quoteDiscount(user, listAmount);
+  const baseAmount = Math.max(0, listAmount - promoDiscount);
+
   const proration = isSwitch
     ? await computeProratedCredit(existingActive, oldPlan)
     : { credit: 0, reason: 'not_applicable' };
@@ -398,8 +413,13 @@ const createOrder = async ({ user, tier, billingCycle, applyWalletCredit = true 
     type: 'subscription',
     plan: plan._id,
     amount: chargeable,
+    // The plan price this order was actually written against, i.e. AFTER the
+    // promo discount — the breakdown shows the discount as its own line, so
+    // including it here too would show the same money twice.
     amountBeforeCredit: baseAmount,
     walletApplied,
+    promoCode: promo ? promo._id : null,
+    promoDiscount,
     previousSubscription: isSwitch ? existingActive._id : null,
     proratedCredit,
     excessProrationCredit,
@@ -579,6 +599,13 @@ const activate = async (payment, { gatewayPaymentId = null, signature = null } =
   // the admin notification below.
   referralService.creditRewardForFirstPayment(paid, req).catch((err) => {
     console.error('subscription.service.activate: referral reward failed (non-fatal):', err.message);
+  });
+
+  // Freeze the influencer's commission on the cash this order collected.
+  // Same non-blocking contract — commission accounting is reconstructable
+  // from the Payment row, an activation the user paid for is not.
+  promoCodeService.recordCommission(paid, req).catch((err) => {
+    console.error('subscription.service.activate: promo commission failed (non-fatal):', err.message);
   });
 
   User.findById(paid.user)

@@ -228,6 +228,16 @@ const AUTH_MESSAGES = Object.freeze({
   REFERRAL_SETTINGS_UPDATED: 'Referral settings updated successfully.',
   INVALID_REFERRAL_CODE: 'This referral code is invalid.',
   SELF_REFERRAL_NOT_ALLOWED: 'You cannot use your own referral code.',
+
+  // Influencer promo codes
+  PROMO_CODES_FETCHED: 'Influencers fetched successfully.',
+  PROMO_CODE_FETCHED: 'Influencer fetched successfully.',
+  PROMO_CODE_CREATED: 'Influencer created successfully.',
+  PROMO_CODE_UPDATED: 'Influencer updated successfully.',
+  PROMO_CODE_DEACTIVATED: 'Influencer deactivated successfully.',
+  PROMO_CODE_NOT_FOUND: 'Influencer not found.',
+  PROMO_CODE_EXISTS: 'That promo code is already in use.',
+  INFLUENCER_EMAIL_EXISTS: 'An influencer with that email already exists.',
   WALLET_FETCHED: 'Wallet fetched successfully.',
   WALLET_HISTORY_FETCHED: 'Wallet history fetched successfully.',
   WALLET_TRANSACTION_FETCHED: 'Wallet transaction fetched successfully.',

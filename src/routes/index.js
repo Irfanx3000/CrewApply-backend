@@ -11,6 +11,7 @@ const adminApplicationRoutes = require('./adminApplication.routes');
 const adminUserRoutes = require('./adminUser.routes');
 const adminAccountRoutes = require('./adminAccount.routes');
 const adminReferralRoutes = require('./adminReferral.routes');
+const adminPromoCodeRoutes = require('./adminPromoCode.routes');
 const subscriptionRoutes = require('./subscription.routes');
 const paymentRoutes = require('./payment.routes');
 const adminPlanRoutes = require('./adminPlan.routes');
@@ -63,6 +64,7 @@ const setupRoutes = (app) => {
   app.use(`${API_PREFIX}/admin/users`, adminUserRoutes);
   app.use(`${API_PREFIX}/admin/admin-accounts`, adminAccountRoutes);
   app.use(`${API_PREFIX}/admin/referrals`, adminReferralRoutes);
+  app.use(`${API_PREFIX}/admin/influencers`, adminPromoCodeRoutes);
   app.use(`${API_PREFIX}/applications`, applicationRoutes);
   app.use(`${API_PREFIX}/subscription`, subscriptionRoutes);
   app.use(`${API_PREFIX}/payments`, paymentRoutes);

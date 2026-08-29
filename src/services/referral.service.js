@@ -2,7 +2,6 @@
 
 const crypto = require('crypto');
 const User = require('../models/user.model');
-const Payment = require('../models/payment.model');
 const Referral = require('../models/referral.model');
 const WalletTransaction = require('../models/walletTransaction.model');
 const auditService = require('./audit.service');
@@ -122,14 +121,25 @@ const attribute = async (refereeUser, req) => {
 // ── Reward crediting (called from subscription.service.js's activate()) ───────
 
 /**
- * Rewards the referrer once their referee's FIRST-EVER paid subscription
+ * Rewards the referrer once their referee's first CASH-paid subscription
  * succeeds. Never throws — a referral-reward failure must not break
  * subscription activation (same fire-and-forget philosophy as this
  * codebase's admin notifications).
+ *
+ * "Exactly once per referee" is enforced solely by the `status: 'pending'`
+ * match plus the atomic claim below — a referral leaves 'pending' the moment
+ * it is handled, so a renewal can never re-reward. Counting the referee's
+ * paid payments to detect "first ever" was doing the same job less
+ * accurately: Payment also holds consultancy orders, so a referred user who
+ * booked a session before subscribing pushed the count past 1 and silently
+ * lost their referrer the reward forever.
  */
 const creditRewardForFirstPayment = async (paidPayment, req) => {
-  const paidCount = await Payment.countDocuments({ user: paidPayment.user, status: 'paid' });
-  if (paidCount !== 1) return; // a renewal, not this user's first payment — never re-rewards
+  // A zero-rupee order (proration + wallet credit fully covering the plan)
+  // is not a conversion — no cash entered the business, so no reward leaves
+  // it. Deliberately returns with the referral still 'pending' so the
+  // referee's next genuinely-paid subscription still earns it.
+  if (!(paidPayment.amount > 0)) return;
 
   const referral = await Referral.findOne({ referee: paidPayment.user, status: 'pending' });
   if (!referral) return; // not a referred user, or already handled
@@ -305,8 +315,67 @@ const getReferralStats = async () => {
   };
 };
 
+/**
+ * Admin status override. Only two transitions are reachable (the validation
+ * layer rejects the rest):
+ *
+ *  • -> 'rejected'  void a referral so no reward is ever paid on it.
+ *  • -> 'rewarded'  manually pay out a referral the automatic path
+ *                   suppressed. 'qualified' is otherwise a dead end: the
+ *                   automatic reward only ever fires on the referee's paying
+ *                   subscription and only ever matches a 'pending' row, so a
+ *                   referral parked by the monthly cap or by the program
+ *                   kill-switch could never be paid at all. This is that
+ *                   escape hatch — and it moves REAL money, because a status
+ *                   string saying 'rewarded' over an untouched wallet is a
+ *                   ledger that lies.
+ */
 const setReferralStatus = async (id, status, adminId, req) => {
-  const referral = await Referral.findByIdAndUpdate(id, { $set: { status } }, { new: true })
+  // The wallet credit and the status flip must not race a concurrent
+  // automatic reward, so claim the row atomically first (same pattern as
+  // creditRewardForFirstPayment's findOneAndUpdate) and only then move money.
+  const payingOut = status === 'rewarded';
+
+  if (payingOut) {
+    const settings = await referralSettingService.getSettings();
+    const claimed = await Referral.findOneAndUpdate(
+      { _id: id, status: { $in: ['pending', 'qualified'] } },
+      { $set: { status: 'rewarded', rewardAmount: settings.rewardAmount, rewardedAt: new Date() } },
+      { new: true }
+    );
+
+    if (claimed) {
+      const { transaction } = await walletService.credit({
+        user: claimed.referrer,
+        amount: settings.rewardAmount,
+        type: 'referral_reward',
+        referral: claimed._id,
+        description: 'Referral reward — released by admin',
+        createdBy: adminId,
+      });
+      await Referral.updateOne({ _id: claimed._id }, { $set: { walletTransaction: transaction._id } });
+
+      auditService.log({ event: AUDIT_EVENTS.REFERRAL_REWARDED, userId: claimed.referrer, ...ctxOf(req), metadata: { referralId: claimed._id, amount: settings.rewardAmount, by: adminId, manual: true } }).catch(() => {});
+      auditService.log({ event: AUDIT_EVENTS.WALLET_CREDITED, userId: claimed.referrer, ...ctxOf(req), metadata: { amount: settings.rewardAmount, transactionId: transaction._id } }).catch(() => {});
+
+      notificationService
+        .create({
+          userId: claimed.referrer,
+          type: notificationService.NOTIFICATION_TYPES.REFERRAL_REWARDED,
+          title: 'You earned a referral reward!',
+          body: `₹${(settings.rewardAmount / 100).toFixed(0)} wallet credit has been added for your referral.`,
+          data: { referralId: claimed._id, amount: settings.rewardAmount },
+        })
+        .catch(() => {});
+    }
+    // !claimed => already 'rewarded' or 'rejected'. Fall through to the read
+    // below and hand back the current row: paying out twice is far worse than
+    // a no-op, and the caller only ever asked for it to end up rewarded.
+  } else {
+    await Referral.updateOne({ _id: id }, { $set: { status } });
+  }
+
+  const referral = await Referral.findById(id)
     .populate('referrer', 'name email avatar')
     .populate('referee', 'name email');
   if (!referral) {

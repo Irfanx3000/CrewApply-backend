@@ -36,7 +36,7 @@ const maritimeProfileSchema = new mongoose.Schema(
 // admin sees regardless of scope, with no write actions of its own).
 const PERMISSION_SECTIONS = Object.freeze([
   'jobs', 'categories', 'applications', 'users', 'subscriptions',
-  'referrals', 'payments', 'consultancy', 'support', 'banners', 'analytics', 'settings',
+  'referrals', 'influencers', 'payments', 'consultancy', 'support', 'banners', 'analytics', 'settings',
 ]);
 
 const sectionPermissionSchema = new mongoose.Schema(
@@ -55,6 +55,7 @@ const permissionsSchema = new mongoose.Schema(
     users: { type: sectionPermissionSchema, default: undefined },
     subscriptions: { type: sectionPermissionSchema, default: undefined },
     referrals: { type: sectionPermissionSchema, default: undefined },
+    influencers: { type: sectionPermissionSchema, default: undefined },
     payments: { type: sectionPermissionSchema, default: undefined },
     consultancy: { type: sectionPermissionSchema, default: undefined },
     support: { type: sectionPermissionSchema, default: undefined },
@@ -314,6 +315,20 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0,
       min: 0,
+    },
+
+    // Influencer promo code this account signed up under — set ONCE at
+    // registration and never overwritten, exactly like referredBy above.
+    // A user has at most one of the two: register() resolves a referral code
+    // first and only falls back to a promo code, so the same signup input
+    // accepts either kind without the user needing to know which they hold.
+    // This field is the source of truth for every promo analytic; the
+    // PromoCode.usageCount counter is only a denormalized cache of it.
+    promoCode: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'PromoCode',
+      default: null,
+      index: true,
     },
 
     // ── Account status ─────────────────────────────────────────────────────────

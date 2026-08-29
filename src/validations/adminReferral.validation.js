@@ -14,8 +14,17 @@ const listReferralsQuery = [
   query('status').optional().isIn(REFERRAL_STATUSES).withMessage('Invalid referral status.'),
 ];
 
+// Only the two transitions an admin can actually drive. 'pending' and
+// 'qualified' are machine-owned lifecycle states — letting the API set them
+// by hand would desync the Referral row from the wallet ledger that backs it
+// (see referral.service.js's setReferralStatus).
+const ADMIN_SETTABLE_STATUSES = ['rejected', 'rewarded'];
+
 const updateReferralStatus = [
-  body('status').notEmpty().isIn(REFERRAL_STATUSES).withMessage('Invalid referral status.'),
+  body('status')
+    .notEmpty()
+    .isIn(ADMIN_SETTABLE_STATUSES)
+    .withMessage(`Status must be one of: ${ADMIN_SETTABLE_STATUSES.join(', ')}.`),
 ];
 
 const referralSettingsBody = [

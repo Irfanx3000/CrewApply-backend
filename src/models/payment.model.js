@@ -95,6 +95,17 @@ const paymentSchema = new mongoose.Schema(
     walletApplied: { type: Number, default: 0 }, // paise debited from the buyer's wallet for this order
     currency: { type: String, default: 'INR' },
 
+    // ── Influencer promo code ──────────────────────────────────────────────
+    // Set only on the buyer's first paid subscription, from User.promoCode.
+    // All three values are SNAPSHOTS, frozen at order-creation/activation:
+    // editing an influencer's rates later must change what future orders
+    // earn, never rewrite what is already owed on past ones. Every promo
+    // analytic and every commission figure reads these fields, which is why
+    // there is no separate conversions collection.
+    promoCode: { type: mongoose.Schema.Types.ObjectId, ref: 'PromoCode', default: null, index: true },
+    promoDiscount: { type: Number, default: 0 }, // paise taken off the plan price
+    promoCommission: { type: Number, default: 0 }, // paise owed to the influencer, computed on cash collected
+
     status: {
       type: String,
       enum: { values: PAYMENT_STATUSES, message: 'Invalid payment status.' },
