@@ -156,6 +156,39 @@ const MIN_YEARS = {
   'Senior Officer': 5, 'Head of Department': 8, 'Management': 10,
 };
 
+/* ⚠️ PLACEHOLDER SALARY BANDS — indicative monthly USD, by rank level.
+ * Jobs seeded without a salary show no pay at all on the card and in the
+ * details screen, and the salary filter has nothing to match, which is why
+ * these exist. They are NOT quotes from any operator: review them before
+ * publishing, or set SHOW_SALARY = false to seed without pay figures.
+ * Cruise hotel-side roles run their own lower table, as shipboard hotel pay
+ * sits well below the licensed deck/engine scale at the same level. */
+const SHOW_SALARY = true;
+const SALARY_BY_DESIGNATION = {
+  'Trainee / Cadet': { min: 400, max: 900 },
+  'Rating': { min: 800, max: 1600 },
+  'Petty Officer': { min: 1400, max: 2400 },
+  'Junior Officer': { min: 2000, max: 3800 },
+  'Senior Officer': { min: 3800, max: 6500 },
+  'Head of Department': { min: 6000, max: 10000 },
+  'Management': { min: 9000, max: 15000 },
+};
+const HOTEL_SALARY_BY_DESIGNATION = {
+  'Trainee / Cadet': { min: 400, max: 800 },
+  'Rating': { min: 600, max: 1300 },
+  'Petty Officer': { min: 1000, max: 1900 },
+  'Junior Officer': { min: 1500, max: 2800 },
+  'Senior Officer': { min: 2500, max: 4200 },
+  'Head of Department': { min: 4000, max: 7000 },
+  'Management': { min: 6500, max: 11000 },
+};
+
+const salaryFor = (department, designation) => {
+  if (!SHOW_SALARY) return {};
+  const table = department === DEPT.HOTEL ? HOTEL_SALARY_BY_DESIGNATION : SALARY_BY_DESIGNATION;
+  return { ...table[designation], currency: 'USD', period: 'month' };
+};
+
 function designationOf(rank) {
   const r = rank.toLowerCase();
   const hit = DESIGNATION_RULES.find(([re]) => re.test(r));
@@ -177,7 +210,7 @@ function describe({ rank, department, vesselType }) {
   return [
     `${rank} vacancy in the ${department} department aboard ${vesselType} vessels.`,
     `Level: ${designation}. Minimum ${MIN_YEARS[designation]} year(s) of relevant shipboard experience.`,
-    'Valid STCW, CDC, medical fitness certificate and passport required. Contract duration, salary and joining details are confirmed at interview.',
+    'Valid STCW, CDC, medical fitness certificate and passport required. The salary range is indicative; contract duration, final pay and joining details are confirmed at interview.',
   ].join('\n\n');
 }
 
@@ -194,6 +227,7 @@ function toJob(row, { publish, adminId }) {
     location: LOCATION,
     employmentType: 'Contract',
     experience: { minYears: MIN_YEARS[designation], maxYears: null },
+    salary: salaryFor(row.department, designation),
     description: describe(row),
     requiredDocuments: REQUIRED_DOCUMENTS,
     status: publish ? 'published' : 'draft',
@@ -222,6 +256,19 @@ async function selfCheck() {
   const job = toJob(rows[0], { publish: false, adminId: new mongoose.Types.ObjectId() });
   await new Job(job).validate(); // throws with the failing field if the schema rejects it
   assert.ok(rows.every((r) => CATEGORY_FOR_DEPT[r.department]), 'every department maps to a category');
+
+  // Salary: a band for every level, min ≤ max, and it actually reaches the job.
+  for (const designation of Object.keys(MIN_YEARS)) {
+    for (const table of [SALARY_BY_DESIGNATION, HOTEL_SALARY_BY_DESIGNATION]) {
+      const band = table[designation];
+      assert.ok(band && band.min > 0 && band.max >= band.min, `salary band for ${designation}`);
+    }
+  }
+  if (SHOW_SALARY) {
+    assert.ok(job.salary.min > 0 && job.salary.max >= job.salary.min, 'sample job carries a salary');
+    assert.strictEqual(job.salary.currency, 'USD');
+    assert.strictEqual(job.salary.period, 'month');
+  }
   assert.ok(rows.every((r) => describe(r).length <= 5000 && r.rank.length <= 100), 'field length limits');
 
   assert.strictEqual(designationOf('Deck Cadet'), 'Trainee / Cadet');
@@ -236,16 +283,51 @@ async function selfCheck() {
     .map((ship) => `${ship}: deck ${count(ship, DEPT.DECK)}, engine ${count(ship, DEPT.ENGINE)}, hotel ${count(ship, DEPT.HOTEL)}`)
     .join(' | ');
   console.log(`OK — ${rows.length} jobs. ${table}`);
+
+  if (SHOW_SALARY) {
+    console.log('\nSalary bands (USD / month) — PLACEHOLDERS, review before publishing:');
+    for (const designation of Object.keys(MIN_YEARS)) {
+      const deck = SALARY_BY_DESIGNATION[designation];
+      const hotel = HOTEL_SALARY_BY_DESIGNATION[designation];
+      console.log(
+        `  ${designation.padEnd(18)} deck/engine ${String(deck.min).padStart(5)}–${String(deck.max).padEnd(6)} hotel ${String(hotel.min).padStart(5)}–${hotel.max}`,
+      );
+    }
+  } else {
+    console.log('\nSHOW_SALARY is off — jobs will be seeded with no pay shown.');
+  }
 }
 
 // ── Run ──────────────────────────────────────────────────────────────────────
-async function ensureTaxonomy(type, names) {
-  for (const name of names) {
-    await JobTaxonomy.findOneAndUpdate(
-      { type, name },
-      { $set: { isActive: true }, $setOnInsert: { type, name } },
-      { upsert: true, setDefaultsOnInsert: true, collation: { locale: 'en', strength: 2 } }
-    );
+/* Find-then-create/update rather than one upsert. `type` and `name` are
+   immutable in the schema, and an upsert that carries them in $setOnInsert
+   while $set-ing isActive is exactly the combination that left rows created
+   but INACTIVE — the app only ever lists { isActive: true }, so those
+   categories existed and were invisible. Two explicit paths, no upsert
+   semantics to reason about, and the result is verified below. */
+async function ensureTaxonomy(type, names, iconFor = () => null) {
+  for (const [i, name] of names.entries()) {
+    const existing = await JobTaxonomy.findOne({ type, name }).collation({ locale: 'en', strength: 2 });
+    const iconKey = iconFor(name);
+
+    if (!existing) {
+      await JobTaxonomy.create({
+        type,
+        name,
+        isActive: true,
+        sortOrder: (i + 1) * 10,
+        ...(iconKey ? { icon: { type: 'default', key: iconKey } } : null),
+      });
+      continue;
+    }
+
+    const update = {};
+    if (!existing.isActive) update.isActive = true;
+    // Only fills a gap — never overwrites an icon an admin uploaded.
+    if (iconKey && existing.icon?.type === 'default' && existing.icon?.key !== iconKey) {
+      update.icon = { type: 'default', key: iconKey };
+    }
+    if (Object.keys(update).length) await JobTaxonomy.updateOne({ _id: existing._id }, { $set: update });
   }
 }
 
@@ -303,13 +385,38 @@ async function ensureTaxonomy(type, names) {
 
   await ensureTaxonomy('vesselType', Object.values(SHIP));
   await ensureTaxonomy('department', Object.values(DEPT));
-  await ensureTaxonomy('category', [...new Set(Object.values(CATEGORY_FOR_DEPT))]);
+  // Icon keys are the app's bundled category assets (see seedJobCategories.js
+  // and CategoryCard.jsx). Without one, a new category falls back to a generic
+  // icon on the home screen.
+  const categoryIcons = { Deck: 'deck', Engine: 'engine', Hospitality: 'hospitality' };
+  await ensureTaxonomy('category', [...new Set(Object.values(CATEGORY_FOR_DEPT))], (name) => categoryIcons[name]);
+
   const retired = await JobTaxonomy.updateMany(
     { type: 'category', name: { $in: RETIRED_CATEGORIES }, isActive: true },
     { $set: { isActive: false } },
     { collation: { locale: 'en', strength: 2 } }
   );
-  console.log(`  ✓ taxonomy ready (ship types, departments, categories); retired ${retired.modifiedCount} old categories`);
+
+  /* Verified, not assumed: the app lists only active entries, so an inactive
+     row here means dropdowns and home-screen cards silently come up empty. */
+  const required = [
+    ['vesselType', Object.values(SHIP)],
+    ['department', Object.values(DEPT)],
+    ['category', [...new Set(Object.values(CATEGORY_FOR_DEPT))]],
+  ];
+  console.log(`  ✓ taxonomy (retired ${retired.modifiedCount} old categories):`);
+  const inactive = [];
+  for (const [type, names] of required) {
+    const rows = await JobTaxonomy.find({ type, name: { $in: names } })
+      .collation({ locale: 'en', strength: 2 })
+      .lean();
+    for (const name of names) {
+      const row = rows.find((r) => r.name.toLowerCase() === name.toLowerCase());
+      console.log(`      ${row?.isActive ? 'active  ' : 'INACTIVE'} ${type} · ${name}`);
+      if (!row?.isActive) inactive.push(`${type} · ${name}`);
+    }
+  }
+  if (inactive.length) throw new Error(`Taxonomy not active after seeding: ${inactive.join(', ')}`);
 
   // insertMany runs full schema validation on every document.
   const inserted = await Job.insertMany(rows.map((row) => toJob(row, { publish, adminId: admin._id })));
