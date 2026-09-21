@@ -28,6 +28,10 @@
 //                           (applicationId). Stored as ObjectId in one and as a
 //                           string in the other, so both forms are matched.
 //
+// Categories (the app's home-screen cards) follow the SHIP TYPE: Cruise Ships,
+// Merchant Navy, and Others as the catch-all. Every other category is switched
+// off, so no card opens an empty list.
+//
 // Taxonomy: the Ship Type and Department lists are SHARED with more than jobs —
 // the career-profile experience editor offers Ship Types (a user who served on
 // a Tanker must still be able to say so) and signup/maritime profile offers
@@ -58,10 +62,17 @@ const { ROLES } = require('../constants/roles');
 const SHIP = { CRUISE: 'Cruise', MERCHANT: 'Merchant Navy' };
 const DEPT = { DECK: 'Deck', ENGINE: 'Engine', HOTEL: 'Hotel / Hospitality' };
 
-// Job.category drives the app's home-screen category cards
-// (seedJobCategories.js: Deck, Engine, Hospitality, Catering, Others).
-const CATEGORY_FOR_DEPT = { [DEPT.DECK]: 'Deck', [DEPT.ENGINE]: 'Engine', [DEPT.HOTEL]: 'Hospitality' };
-const RETIRED_CATEGORIES = ['Cruise Ships', 'Merchant Navy'];
+// Job.category drives the app's home-screen category cards, and it now follows
+// the SHIP TYPE: tapping "Cruise Ships" on the home screen opens every cruise
+// job, "Merchant Navy" every merchant one. (It used to follow the department —
+// Deck / Engine / Hospitality — which split the same jobs a second way.)
+const CATEGORY_FOR_SHIP = { [SHIP.CRUISE]: 'Cruise Ships', [SHIP.MERCHANT]: 'Merchant Navy' };
+
+// The only categories left active. "Others" carries no jobs; it stays on as the
+// catch-all for anything an admin files by hand. Every other category — the old
+// Deck / Engine / Hospitality / Catering set — is switched off, so the home
+// screen shows these three and nothing that opens an empty list.
+const ACTIVE_CATEGORIES = [...new Set([...Object.values(CATEGORY_FOR_SHIP), 'Others'])];
 
 // Edit before a real run — the only values a human has to choose.
 const COMPANY_NAME = 'CrewApply';
@@ -222,7 +233,7 @@ function toJob(row, { publish, adminId }) {
     department: row.department,
     rank: row.rank,
     designation,
-    category: CATEGORY_FOR_DEPT[row.department],
+    category: CATEGORY_FOR_SHIP[row.vesselType],
     vesselType: row.vesselType,
     location: LOCATION,
     employmentType: 'Contract',
@@ -255,7 +266,11 @@ async function selfCheck() {
   assert.strictEqual(new Set(keys).size, keys.length, 'duplicate role within a ship type + department');
   const job = toJob(rows[0], { publish: false, adminId: new mongoose.Types.ObjectId() });
   await new Job(job).validate(); // throws with the failing field if the schema rejects it
-  assert.ok(rows.every((r) => CATEGORY_FOR_DEPT[r.department]), 'every department maps to a category');
+  assert.ok(rows.every((r) => CATEGORY_FOR_SHIP[r.vesselType]), 'every ship type maps to a category');
+  assert.ok(
+    Object.values(CATEGORY_FOR_SHIP).every((c) => ACTIVE_CATEGORIES.includes(c)),
+    'a job category that is not kept active would open an empty list',
+  );
 
   // Salary: a band for every level, min ≤ max, and it actually reaches the job.
   for (const designation of Object.keys(MIN_YEARS)) {
@@ -363,9 +378,11 @@ async function ensureTaxonomy(type, names, iconFor = () => null) {
   console.log(`    saved-job bookmarks on ${usersWithSaved} user(s)`);
   console.log(`  Create: ${rows.length} jobs as ${publish ? 'PUBLISHED' : 'drafts'}`);
   for (const ship of Object.values(SHIP)) {
-    const per = Object.values(DEPT).map((d) => `${d} ${rows.filter((r) => r.vesselType === ship && r.department === d).length}`);
-    console.log(`    ${ship}: ${per.join(', ')}`);
+    const shipRows = rows.filter((r) => r.vesselType === ship);
+    const per = Object.values(DEPT).map((d) => `${d} ${shipRows.filter((r) => r.department === d).length}`);
+    console.log(`    ${ship} (category "${CATEGORY_FOR_SHIP[ship]}"): ${shipRows.length} — ${per.join(', ')}`);
   }
+  console.log(`  Active categories after this: ${ACTIVE_CATEGORIES.join(', ')} (all others switched off)`);
 
   if (!confirm) {
     console.log('\nRe-run with --confirm to apply.\n');
@@ -388,11 +405,16 @@ async function ensureTaxonomy(type, names, iconFor = () => null) {
   // Icon keys are the app's bundled category assets (see seedJobCategories.js
   // and CategoryCard.jsx). Without one, a new category falls back to a generic
   // icon on the home screen.
-  const categoryIcons = { Deck: 'deck', Engine: 'engine', Hospitality: 'hospitality' };
-  await ensureTaxonomy('category', [...new Set(Object.values(CATEGORY_FOR_DEPT))], (name) => categoryIcons[name]);
+  // Only "Others" has bundled artwork among the three kept categories; Cruise
+  // Ships and Merchant Navy have none, so they show the fallback icon until an
+  // admin uploads one (admin panel → Categories → upload icon).
+  const categoryIcons = { Others: 'others' };
+  await ensureTaxonomy('category', ACTIVE_CATEGORIES, (name) => categoryIcons[name]);
 
+  // Everything else off — by exclusion, so a category added later by hand and
+  // left empty cannot linger on the home screen either.
   const retired = await JobTaxonomy.updateMany(
-    { type: 'category', name: { $in: RETIRED_CATEGORIES }, isActive: true },
+    { type: 'category', name: { $nin: ACTIVE_CATEGORIES }, isActive: true },
     { $set: { isActive: false } },
     { collation: { locale: 'en', strength: 2 } }
   );
@@ -402,7 +424,7 @@ async function ensureTaxonomy(type, names, iconFor = () => null) {
   const required = [
     ['vesselType', Object.values(SHIP)],
     ['department', Object.values(DEPT)],
-    ['category', [...new Set(Object.values(CATEGORY_FOR_DEPT))]],
+    ['category', ACTIVE_CATEGORIES],
   ];
   console.log(`  ✓ taxonomy (retired ${retired.modifiedCount} old categories):`);
   const inactive = [];
